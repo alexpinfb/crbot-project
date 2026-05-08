@@ -322,6 +322,10 @@ func handlePacket(text string, c *websocket.Conn, label string) {
 	}
 
 	if !cachedCatching.Load() {
+		idDbg := getQuoted(text, "id")
+		amountDbg := getNum(text, "in_amount")
+		brandDbg := strings.ToLower(getQuoted(text, "brand_name"))
+		logf("WS_RAW_ADD_STOP id=%s amount=%.2f brand=%s via=%s", idDbg, amountDbg, brandDbg, label)
 		return
 	}
 
@@ -453,15 +457,6 @@ func statusLoop() {
 
 func main() {
 	_ = godotenv.Load()
-
-	licensePath := getenv("LICENSE_KEY", "")
-	if licensePath == "" {
-		panic("missing LICENSE_KEY")
-	}
-	if err := verifyLicense(licensePath); err != nil {
-		panic("invalid LICENSE_KEY: " + err.Error())
-	}
-	logf("LICENSE_OK file=%s", licensePath)
 
 	cookie = os.Getenv("COOKIE")
 	if cookie == "" {

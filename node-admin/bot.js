@@ -257,7 +257,7 @@ const keyboard = {
       ["🛑 Полный стоп"],
       ["🚫 ЧС ON/OFF", "📋 Показать ЧС"],
       ["➕ Добавить в ЧС", "➖ Удалить из ЧС"],
-      ["⚙️ Диапазоны"]
+      ["⚙️ Диапазоны", "⚙️ Воркеры"]
     ],
     resize_keyboard: true
   }
@@ -542,12 +542,12 @@ tg.on("callback_query", async (q) => {
 
 
 
-async function setWorkerRange(workerId, min, max) {
+async function setWorkerRange(workerId, min, max, enabled = true) {
   try {
     await redis.set(`crbot:worker:${workerId}`, JSON.stringify({
       min,
       max,
-      enabled: true,
+      enabled,
       updated: Date.now()
     }));
     return true;
@@ -585,16 +585,37 @@ async function getWorkerStatusesText() {
       const st = JSON.parse(raw);
       const age = Math.round((now - (st.ts || 0)) / 1000);
       const live = age <= 20;
-      const ws = st.ws1 ? "🟢" : "🔴";
-      const alive = live ? ws : "🟡";
       const cfg = await getWorkerRange(id);
+      const enabled = cfg?.enabled ?? false;
+      const icon = !enabled ? "🔴" : (live && st.ws1 ? "🟢" : "🟡");
       const range = cfg ? ` ${cfg.min}-${cfg.max}` : "";
-      lines.push(`${names[id]}: ${alive}${range}`);
+      lines.push(`${names[id]}: ${icon}${range}`);
     } catch {
       lines.push(`${names[id]}: ⚪ bad status`);
     }
   }
 
+  return lines.join("\n");
+}
+
+async function setWorkerEnabled(workerId, enabled) {
+  const cur = await getWorkerRange(workerId);
+  const min = cur?.min ?? 300;
+  const max = cur?.max ?? 50000;
+  return setWorkerRange(workerId, min, max, enabled);
+}
+
+async function getWorkersToggleText() {
+  const names = { v1: "WS1", v2: "WS2", v3: "WS3", v4: "WS4" };
+  const lines = [];
+  for (const id of ["v1", "v2", "v3", "v4"]) {
+    const cfg = await getWorkerRange(id);
+    if (!cfg) {
+      lines.push(`${names[id]}: ⚪ нет данных`);
+    } else {
+      lines.push(`${names[id]}: ${cfg.enabled ? "🟢 ON" : "🔴 OFF"} ${cfg.min}-${cfg.max}`);
+    }
+  }
   return lines.join("\n");
 }
 
@@ -653,6 +674,32 @@ tg.on("message", async (msg) => {
     rangeWorker = null;
 
     tg.sendMessage(CHAT_ID, ok ? `✅ ${doneWorker}: ${min}-${max}` : `❌ Не смог сохранить ${doneWorker}`, keyboard);
+    return;
+  }
+
+  if (t === "⚙️ Воркеры") {
+    const txt = await getWorkersToggleText();
+    tg.sendMessage(CHAT_ID, `⚙️ Воркеры:\n${txt}\n\nВыбери кого включить/выключить:`, {
+      reply_markup: {
+        keyboard: [
+          ["WS1 ON/OFF", "WS2 ON/OFF"],
+          ["WS3 ON/OFF", "WS4 ON/OFF"],
+          ["↩️ Назад"]
+        ],
+        resize_keyboard: true
+      }
+    });
+    return;
+  }
+
+  if (["WS1 ON/OFF", "WS2 ON/OFF", "WS3 ON/OFF", "WS4 ON/OFF"].includes(t)) {
+    const map = { "WS1 ON/OFF": "v1", "WS2 ON/OFF": "v2", "WS3 ON/OFF": "v3", "WS4 ON/OFF": "v4" };
+    const workerId = map[t];
+    const cur = await getWorkerRange(workerId);
+    const enabled = !(cur?.enabled ?? false);
+    const ok = await setWorkerEnabled(workerId, enabled);
+    const txt = await getWorkersToggleText();
+    tg.sendMessage(CHAT_ID, ok ? `✅ ${workerId}: ${enabled ? "ON" : "OFF"}\n\n${txt}` : `❌ Не смог переключить ${workerId}`, keyboard);
     return;
   }
 
