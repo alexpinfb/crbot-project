@@ -1,0 +1,7 @@
+.env
+node_modules/
+*.log
+live*.log
+*.bak*
+crbot-go-worker
+.DS_Store
