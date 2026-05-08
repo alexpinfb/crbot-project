@@ -454,6 +454,15 @@ func statusLoop() {
 func main() {
 	_ = godotenv.Load()
 
+	licensePath := getenv("LICENSE_KEY", "")
+	if licensePath == "" {
+		panic("missing LICENSE_KEY")
+	}
+	if err := verifyLicense(licensePath); err != nil {
+		panic("invalid LICENSE_KEY: " + err.Error())
+	}
+	logf("LICENSE_OK file=%s", licensePath)
+
 	cookie = os.Getenv("COOKIE")
 	if cookie == "" {
 		panic("missing COOKIE")
