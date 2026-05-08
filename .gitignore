@@ -5,3 +5,5 @@ live*.log
 *.bak*
 crbot-go-worker
 .DS_Store
+license_private.pem
+*.license.txt
