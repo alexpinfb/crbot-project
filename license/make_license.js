@@ -2,7 +2,6 @@ const crypto = require("crypto");
 const fs = require("fs");
 
 const privateKey = fs.readFileSync("license_private.pem");
-
 const user = process.argv[2];
 
 if (!user) {
@@ -15,14 +14,11 @@ const payload = JSON.stringify({
   createdAt: Date.now()
 });
 
-const sign = crypto.sign(null, Buffer.from(payload), privateKey);
+const signature = crypto.sign(null, Buffer.from(payload), privateKey).toString("base64");
 
-const license = {
+const license = Buffer.from(JSON.stringify({
   payload,
-  signature: sign.toString("base64")
-};
+  signature
+})).toString("base64url");
 
-const out = `${user}.license.txt`;
-fs.writeFileSync(out, JSON.stringify(license, null, 2));
-
-console.log(`Generated ${out}`);
+console.log("LICENSE_KEY=" + license);

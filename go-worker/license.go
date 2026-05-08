@@ -15,7 +15,7 @@ type LicenseFile struct {
 	Signature string `json:"signature"`
 }
 
-func verifyLicense(path string) error {
+func verifyLicense(licenseKey string) error {
 	pubPem, err := os.ReadFile("license_public.pem")
 	if err != nil {
 		return err
@@ -33,7 +33,7 @@ func verifyLicense(path string) error {
 
 	pub := pubAny.(ed25519.PublicKey)
 
-	raw, err := os.ReadFile(path)
+	raw, err := base64.RawURLEncoding.DecodeString(licenseKey)
 	if err != nil {
 		return err
 	}
@@ -48,8 +48,7 @@ func verifyLicense(path string) error {
 		return err
 	}
 
-	ok := ed25519.Verify(pub, []byte(lic.Payload), sig)
-	if !ok {
+	if !ed25519.Verify(pub, []byte(lic.Payload), sig) {
 		return fmt.Errorf("license verify failed")
 	}
 
