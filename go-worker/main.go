@@ -12,6 +12,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 var (
 	ctx      = context.Background()
 	cookie   string
+	userAgent string
 	provider string
 	workerID string
 	instance string
@@ -36,6 +38,8 @@ var (
 	cachedCatching atomic.Bool
 	cachedSettings atomic.Value
 	cachedWorkerCfg atomic.Value
+
+	seenIds sync.Map
 
 	sendClient *http.Client
 	crClient   *http.Client
@@ -144,7 +148,7 @@ func acquireLock(id string, amount float64, label string) bool {
 		"ts":       time.Now().UnixMilli(),
 	})
 
-	ok, err := rdb.SetNX(ctx, "crbot:takeLock", string(body), 4*time.Second).Result()
+	ok, err := rdb.SetNX(ctx, "crbot:takeLock", string(body), 1000*time.Millisecond).Result()
 	if err != nil {
 		return false
 	}
@@ -154,6 +158,47 @@ func acquireLock(id string, amount float64, label string) bool {
 func releaseLock() {
 	_ = rdb.Del(ctx, "crbot:takeLock").Err()
 }
+
+func saveActiveOrderFromTake(domain string, orderId string, amount float64, body string, label string) {
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+		logf("ACTIVE_ORDER_SAVE_FAIL id=%s error=json:%s", orderId, err.Error())
+		return
+	}
+
+	dataAny, ok := parsed["data"]
+	if !ok {
+		logf("ACTIVE_ORDER_SAVE_FAIL id=%s error=no_data", orderId)
+		return
+	}
+
+	data, ok := dataAny.(map[string]any)
+	if !ok {
+		logf("ACTIVE_ORDER_SAVE_FAIL id=%s error=data_not_object", orderId)
+		return
+	}
+
+	data["source_domain"] = domain
+	data["source_ws_id"] = orderId
+	data["amount"] = amount
+	data["via"] = label
+	data["saved_at"] = time.Now().UnixMilli()
+
+	raw, err := json.Marshal(data)
+	if err != nil {
+		logf("ACTIVE_ORDER_SAVE_FAIL id=%s error=marshal:%s", orderId, err.Error())
+		return
+	}
+
+	if err := rdb.Set(ctx, "crbot:activeOrder", string(raw), 30*time.Minute).Err(); err != nil {
+		logf("ACTIVE_ORDER_SAVE_FAIL id=%s error=redis:%s", orderId, err.Error())
+		return
+	}
+
+	_ = rdb.Publish(ctx, "crbot:activeOrder:new", string(raw)).Err()
+	logf("ACTIVE_ORDER_SAVED id=%s domain=%s amount=%.2f", orderId, domain, amount)
+}
+
 
 func getQuoted(s, key string) string {
 	pat := `"` + key + `":"`
@@ -197,22 +242,24 @@ func getNum(s, key string) float64 {
 
 func makeHTTPClient() *http.Client {
 	tr := &http.Transport{
-		Proxy:               http.ProxyFromEnvironment,
-		MaxIdleConns:        32,
-		MaxIdleConnsPerHost: 16,
-		IdleConnTimeout:     30 * time.Second,
-		DisableCompression:  true,
-		ForceAttemptHTTP2:   false,
+		Proxy:                 http.ProxyFromEnvironment,
+		MaxIdleConns:          512,
+		MaxIdleConnsPerHost:   256,
+		MaxConnsPerHost:       0,
+		IdleConnTimeout:       120 * time.Second,
+		DisableCompression:    true,
+		ForceAttemptHTTP2:     true,
+		ExpectContinueTimeout: 0,
+		ResponseHeaderTimeout: 2500 * time.Millisecond,
 		DialContext: (&net.Dialer{
-			Timeout:   1200 * time.Millisecond,
-			KeepAlive: 30 * time.Second,
+			Timeout:   800 * time.Millisecond,
+			KeepAlive: 60 * time.Second,
 		}).DialContext,
-		TLSHandshakeTimeout: 1200 * time.Millisecond,
+		TLSHandshakeTimeout: 800 * time.Millisecond,
 		TLSClientConfig:    &tls.Config{InsecureSkipVerify: true},
 	}
-	return &http.Client{Transport: tr, Timeout: 5 * time.Second}
+	return &http.Client{Transport: tr, Timeout: 3 * time.Second}
 }
-
 func takeDomain(domain, id string, started time.Time, ch chan<- TakeResult) {
 	client := sendClient
 	if domain == "app.cr.bot" {
@@ -229,8 +276,18 @@ func takeDomain(domain, id string, started time.Time, ch chan<- TakeResult) {
 	req.Header.Set("Cookie", cookie)
 	req.Header.Set("Origin", "https://"+domain)
 	req.Header.Set("Referer", "https://"+domain+"/")
-	req.Header.Set("User-Agent", "Mozilla/5.0")
+	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Connection", "keep-alive")
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Pragma", "no-cache")
+	req.Header.Set("Sec-Fetch-Dest", "empty")
+	req.Header.Set("Sec-Fetch-Mode", "cors")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	req.Header.Set("sec-ch-ua", `"Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147"`)
+	req.Header.Set("sec-ch-ua-mobile", "?0")
+	req.Header.Set("sec-ch-ua-platform", `"macOS"`)
 
 	resp, err := client.Do(req)
 	ms := time.Since(started).Milliseconds()
@@ -245,14 +302,18 @@ func takeDomain(domain, id string, started time.Time, ch chan<- TakeResult) {
 }
 
 func takeFast(id string, amount float64, label string) {
-	if !getSharedCatching() {
-		logf("TAKE_SKIP_STOP id=%s amount=%.2f via=%s reason=crbot:catching", id, amount, label)
+	if !cachedCatching.Load() {
+		logf("TAKE_SKIP_STOP id=%s amount=%.2f via=%s reason=crbot:catching_cache", id, amount, label)
 		return
 	}
 
-	settingsNow := getSettings()
+	settingsNow, settingsOk := cachedSettings.Load().(Settings)
+	if !settingsOk {
+		logf("TAKE_SKIP_STOP id=%s amount=%.2f via=%s reason=settings_cache_empty", id, amount, label)
+		return
+	}
 	if !settingsNow.Catching {
-		logf("TAKE_SKIP_STOP id=%s amount=%.2f via=%s reason=crbot:settings", id, amount, label)
+		logf("TAKE_SKIP_STOP id=%s amount=%.2f via=%s reason=crbot:settings_cache", id, amount, label)
 		return
 	}
 
@@ -292,6 +353,7 @@ func takeFast(id string, amount float64, label string) {
 		if r.Status == 200 {
 			ok = true
 			logf("TAKE_OK domain=%s id=%s amount=%.2f elapsed=%dms via=%s body=%s", r.Domain, id, amount, r.Ms, label, r.Body)
+			saveActiveOrderFromTake(r.Domain, id, amount, r.Body, label)
 		} else {
 			logf("TAKE_FAIL domain=%s id=%s amount=%.2f elapsed=%dms status=%d via=%s body=%s", r.Domain, id, amount, r.Ms, r.Status, label, r.Body)
 		}
@@ -342,6 +404,11 @@ func handlePacket(text string, c *websocket.Conn, label string) {
 		return
 	}
 
+	repeated := false
+	if _, loaded := seenIds.LoadOrStore(id, time.Now().UnixMilli()); loaded {
+		repeated = true
+	}
+
 	p := getQuoted(text, "provider")
 	if p != provider {
 		return
@@ -366,7 +433,11 @@ func handlePacket(text string, c *websocket.Conn, label string) {
 		}
 	}
 
-	logf("WS_EVENT id=%s ts=%d amount=%.2f brand=%s via=%s", id, time.Now().UnixMilli(), amount, brand, label)
+	if repeated {
+		logf("REPEAT_ID_FAST id=%s amount=%.2f brand=%s via=%s", id, amount, brand, label)
+	} else {
+		logf("WS_EVENT id=%s ts=%d amount=%.2f brand=%s via=%s", id, time.Now().UnixMilli(), amount, brand, label)
+	}
 	takeFast(id, amount, label)
 }
 
@@ -374,13 +445,13 @@ func wsLoop(label string) {
 	headers := http.Header{}
 	headers.Set("Cookie", cookie)
 	headers.Set("Origin", "https://app.send.tg")
-	headers.Set("User-Agent", "Mozilla/5.0")
+	headers.Set("User-Agent", userAgent)
 
 	dialer := websocket.Dialer{
-		HandshakeTimeout: 2 * time.Second,
+		HandshakeTimeout: 5 * time.Second,
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		NetDialContext: (&net.Dialer{
-			Timeout:   1500 * time.Millisecond,
+			Timeout:   4 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
 	}
@@ -411,7 +482,7 @@ func wsLoop(label string) {
 			handlePacket(string(msg), c, label)
 		}
 
-		time.Sleep(2 * time.Second)
+		time.Sleep(10 * time.Second)
 	}
 }
 
@@ -427,7 +498,7 @@ func warmupLoop() {
 			req.Header.Set("Cookie", cookie)
 			req.Header.Set("Origin", "https://"+domain)
 			req.Header.Set("Referer", "https://"+domain+"/")
-			req.Header.Set("User-Agent", "Mozilla/5.0")
+			req.Header.Set("User-Agent", userAgent)
 
 			resp, err := client.Do(req)
 			if err == nil && resp.Body != nil {
@@ -435,7 +506,7 @@ func warmupLoop() {
 				resp.Body.Close()
 			}
 		}
-		time.Sleep(2 * time.Second)
+		time.Sleep(10 * time.Second)
 	}
 }
 
@@ -459,6 +530,7 @@ func main() {
 	_ = godotenv.Load()
 
 	cookie = os.Getenv("COOKIE")
+	userAgent = getenv("USER_AGENT", "Mozilla/5.0")
 	if cookie == "" {
 		panic("missing COOKIE")
 	}

@@ -418,7 +418,7 @@ async function sendOrderToTelegram(data, elapsed) {
 ID: ${data.id}
 Сумма: ${data.in_amount} RUB
 Магазин: ${data.brand_name}
-Скорость: ${elapsed} ms
+Скорость: ${elapsed || "~"} ms
 
 QR:
 ${data.url}`;
@@ -620,6 +620,32 @@ async function getWorkersToggleText() {
 }
 
 
+
+// ── GO WORKER ACTIVE ORDER WATCHER ─────────────────────────────────────
+let lastGoActiveOrderKey = null;
+
+async function goActiveOrderWatcher() {
+  try {
+    const raw = await redis.get("crbot:activeOrder");
+    if (!raw) return;
+
+    const order = JSON.parse(raw);
+    const key = `${order.id || ""}:${order.payload || order.url || ""}`;
+
+    if (!key || key === lastGoActiveOrderKey) return;
+
+    lastGoActiveOrderKey = key;
+    activeOrder = order;
+
+    log(`GO_ACTIVE_ORDER_NOTIFY id=${order.id} amount=${order.in_amount || order.amount}`);
+    sendOrderToTelegram(order, "worker");
+  } catch (e) {
+    log(`GO_ACTIVE_ORDER_WATCH_ERR ${e.message}`);
+  }
+}
+
+setInterval(goActiveOrderWatcher, 500);
+
 // ── TG MESSAGES ───────────────────────────────────────────────────────
 tg.on("message", async (msg) => {
   if (String(msg.chat.id) !== CHAT_ID) return;
@@ -772,8 +798,19 @@ tg.on("message", async (msg) => {
     return;
   }
   if (t.includes("Активный ордер")) {
-    if (!activeOrder) { tg.sendMessage(CHAT_ID, "Активного ордера нет", keyboard); return; }
-    sendOrderToTelegram(activeOrder, "повтор");
+    let order = activeOrder;
+
+    if (!order) {
+      try {
+        const raw = await redis.get("crbot:activeOrder");
+        if (raw) order = JSON.parse(raw);
+      } catch {}
+    }
+
+    if (!order) { tg.sendMessage(CHAT_ID, "Активного ордера нет", keyboard); return; }
+
+    activeOrder = order;
+    sendOrderToTelegram(order, "повтор");
     return;
   }
 
