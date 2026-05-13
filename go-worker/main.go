@@ -90,6 +90,34 @@ func redisConnect() {
 	}
 	logf("REDIS_READY %s instance=%s worker=%s", redisURL, instance, workerID)
 }
+func redisSubscriber() {
+	sub := rdb.Subscribe(ctx, "crbot:event")
+	ch := sub.Channel()
+
+	for msg := range ch {
+		var evt map[string]any
+
+		if err := json.Unmarshal([]byte(msg.Payload), &evt); err != nil {
+			continue
+		}
+
+		t, _ := evt["type"].(string)
+
+		switch t {
+		case "catching":
+			v, _ := evt["value"].(bool)
+
+			cachedCatching.Store(v)
+
+			if !v {
+				taking.Store(false)
+			}
+
+			logf("CATCHING_UPDATED value=%v", v)
+		}
+	}
+}
+
 
 func getSettings() Settings {
 	s := Settings{Catching: true, Min: 500, Max: 50000, Blacklist: false}
@@ -544,6 +572,7 @@ func main() {
 	crClient = makeHTTPClient()
 
 	redisConnect()
+	go redisSubscriber()
 
 	logf("BOT_GO_START WORKER_ID=%s PROVIDER=%s", workerID, provider)
 

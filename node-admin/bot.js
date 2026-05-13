@@ -63,9 +63,17 @@ async function setSharedActive(data) {
 
 async function setSharedCatching(value) {
   if (!redisReady) return;
+
   try {
     await redis.set("crbot:catching", value ? "1" : "0");
+
+    await redis.publish("crbot:event", JSON.stringify({
+      type: "catching",
+      value
+    }));
+
     log(`REDIS_CATCHING_SET ${value ? "ON" : "OFF"}`);
+
   } catch (e) {
     log(`REDIS_CATCHING_ERR ${e.message}`);
   }
