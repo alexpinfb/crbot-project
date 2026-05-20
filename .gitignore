@@ -1,0 +1,35 @@
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# logs
+*.log
+live-go.log
+nohup.out
+
+# binaries / build output
+crbot-go-worker
+*.exe
+*.bin
+
+# backups / archives
+*.bak*
+*.backup*
+*.old*
+*.tar
+*.tar.gz
+*.zip
+*.7z
+
+# node
+node_modules/
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
+
+# temp
+tmp/
+*.tmp
