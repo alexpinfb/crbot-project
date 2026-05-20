@@ -140,6 +140,44 @@ func authRefreshLoop() {
 	}
 }
 
+func registerWorkerOnce() {
+	if rdb == nil || workerID == "" {
+		return
+	}
+
+	acc := accountID()
+	data := map[string]any{
+		"workerId":  workerID,
+		"worker_id": workerID,
+		"accountId": acc,
+		"account_id": acc,
+		"instance":  instance,
+		"provider":  provider,
+		"online":    true,
+		"updated":   time.Now().UnixMilli(),
+	}
+
+	b, err := json.Marshal(data)
+	if err != nil {
+		logf("WORKER_REGISTER_FAIL worker=%s error=json:%s", workerID, err.Error())
+		return
+	}
+
+	if err := rdb.Set(ctx, "crbot:workerInfo:"+workerID, string(b), 15*time.Second).Err(); err != nil {
+		logf("WORKER_REGISTER_FAIL worker=%s error=redis:%s", workerID, err.Error())
+		return
+	}
+
+	_ = rdb.SAdd(ctx, "crbot:workers", workerID).Err()
+}
+
+func workerRegisterLoop() {
+	for {
+		registerWorkerOnce()
+		time.Sleep(5 * time.Second)
+	}
+}
+
 func redisConnect() {
 	opt, err := redis.ParseURL(redisURL)
 	if err != nil {
@@ -960,6 +998,7 @@ func main() {
 	cachedWorkerCfg.Store(getWorkerCfg())
 
 	go authRefreshLoop()
+	go workerRegisterLoop()
 	go settingsCacheLoop()
 	go statusLoop()
 	go warmupLoop()
