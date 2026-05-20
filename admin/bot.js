@@ -257,6 +257,7 @@ let activeOrder = null;
 let inputMode   = null;
 let rangeWorker = null;
 let cookieAccount = null;
+let pendingNewAccount = null;
 let ws1 = null, ws2 = null;
 const recentIds = new Set();
 
@@ -266,14 +267,10 @@ const tg = new TelegramBot(BOT_TOKEN, { polling: true });
 const keyboard = {
   reply_markup: {
     keyboard: [
-      ["👤 Аккаунт 1", "👤 Аккаунт 2"],
       ["🍪 Куки"],
-      ["📊 Статус", "📋 Активный ордер"],
+      ["📊 Статус"],
       ["▶️ Старт", "⏸ Стоп"],
-      ["🛑 Полный стоп"],
-      ["🚫 ЧС ON/OFF", "📋 Показать ЧС"],
-      ["➕ Добавить в ЧС", "➖ Удалить из ЧС"],
-      ["⚙️ Диапазоны", "🖥 Workers"]
+      ["🖥 Workers"]
     ],
     resize_keyboard: true
   }
@@ -770,38 +767,110 @@ async function getWorkerRange(workerId) {
   }
 }
 
+async function getRegisteredWorkerIds() {
+  try {
+    const ids = await redis.sMembers("crbot:workers");
+    return ids.filter(Boolean).sort();
+  } catch {
+    return [];
+  }
+}
+
+async function getWorkerInfo(workerId) {
+  try {
+    const raw = await redis.get(`crbot:workerInfo:${workerId}`);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function workerDisplayName(id) {
+  const m = String(id).match(/^a(\d+)w(\d+)$/);
+  return m ? `A${m[1]}/W${m[2]}` : String(id);
+}
+
+async function getRegisteredAccounts() {
+  const ids = await getRegisteredWorkerIds();
+  const set = new Set();
+
+  for (const id of ids) {
+    const info = await getWorkerInfo(id);
+    const acc = info?.accountId || info?.account_id || String(id).split("w")[0];
+    if (acc) set.add(acc);
+  }
+
+  return Array.from(set).sort();
+}
+
+async function getNextAccountId() {
+  const accounts = await getRegisteredAccounts();
+  let max = 0;
+
+  for (const acc of accounts) {
+    const m = String(acc).match(/^a(\d+)$/);
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+
+  return `a${max + 1}`;
+}
+
+function accountDisplayName(acc) {
+  const m = String(acc).match(/^a(\d+)$/);
+  return m ? `👤 Аккаунт ${m[1]}` : `👤 ${acc}`;
+}
+
+function accountFromButton(text) {
+  const m = String(text).match(/^👤 Аккаунт (\d+)$/);
+  if (m) return `a${m[1]}`;
+  const m2 = String(text).match(/^👤\s+(a\d+)$/);
+  if (m2) return m2[1];
+  return null;
+}
+
+async function getWorkersForAccount(acc) {
+  const ids = await getRegisteredWorkerIds();
+  const out = [];
+
+  for (const id of ids) {
+    const info = await getWorkerInfo(id);
+    const infoAcc = info?.accountId || info?.account_id || String(id).split("w")[0];
+    if (infoAcc === acc) out.push(id);
+  }
+
+  return out.sort();
+}
+
 async function getWorkerStatusesText() {
-  const keys = await redis.keys("crbot:worker:*");
+  let ids = await getRegisteredWorkerIds();
 
-  const ids = keys
-    .filter(k => /^crbot:worker:a[1-9]w[1-9]$/.test(k))
-    .map(k => k.split(":").pop())
-    .sort();
+  if (!ids.length) {
+    const keys = await redis.keys("crbot:worker:*");
+    ids = keys
+      .filter(k => /^crbot:worker:a[1-9]w[1-9]$/.test(k))
+      .map(k => k.split(":").pop())
+      .sort();
+  }
 
-  const names = {};
-
-  ids.forEach((id) => {
-    const m = id.match(/^a(\d+)w(\d+)$/);
-
-    if (m) {
-      names[id] = `A${m[1]}/W${m[2]}`;
-    } else {
-      names[id] = id;
-    }
-  });
-  const now = Date.now();
   const lines = [];
+  const now = Date.now();
 
   for (const id of ids) {
     const cfg = await getWorkerRange(id);
+    const info = await getWorkerInfo(id);
 
-    if (!cfg) {
-      lines.push(`${names[id]}: ⚪ нет данных`);
-      continue;
-    }
+    const name = workerDisplayName(id);
+    const enabled = cfg?.enabled ?? false;
+    const icon = enabled ? "🟢" : "🔴";
+    const min = cfg?.min ?? "?";
+    const max = cfg?.max ?? "?";
 
-    const icon = cfg.enabled ? "🟢" : "🔴";
-    lines.push(`${names[id]}: ${icon} ${cfg.min}-${cfg.max}`);
+    const updated = Number(info?.updated || 0);
+    const online = updated > 0 && (now - updated) < 20000;
+    const onlineIcon = online ? "📡" : "⚫";
+
+    lines.push(`${name}: ${icon} ${min}-${max} ${onlineIcon}`);
   }
 
   return lines.join("\n");
@@ -877,30 +946,19 @@ tg.on("message", async (msg) => {
   const t = msg.text || "";
 
   if (t === "🖥 Workers") {
+    const accounts = await getRegisteredAccounts();
+    const rows = accounts.map(acc => [accountDisplayName(acc)]);
+    rows.push(["➕ Аккаунт"]);
+    rows.push(["↩️ Назад"]);
+
     const txt = await getWorkerStatusesText();
 
-    await tg.sendMessage(
-      CHAT_ID,
-      `🖥 Workers\n\n${txt}`,
-      {
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { text: "🔄 Refresh", callback_data: "workers_refresh" }
-            ],
-            [
-              { text: "▶️ a1w1", callback_data: "worker_start:a1w1" },
-              { text: "⏸ a1w1", callback_data: "worker_stop:a1w1" }
-            ],
-            [
-              { text: "▶️ a2w1", callback_data: "worker_start:a2w1" },
-              { text: "⏸ a2w1", callback_data: "worker_stop:a2w1" }
-            ]
-          ]
-        }
+    tg.sendMessage(CHAT_ID, `🖥 Workers\n\n${txt}\n\nВыбери аккаунт:`, {
+      reply_markup: {
+        keyboard: rows,
+        resize_keyboard: true
       }
-    );
-
+    });
     return;
   }
 
@@ -929,6 +987,39 @@ tg.on("message", async (msg) => {
     saveState();
     await syncSettingsToRedis();
     tg.sendMessage(CHAT_ID, `✅ Удалено из ЧС: ${v}`, keyboard);
+    return;
+  }
+
+  if (inputMode === "new_account_cookie") {
+    const cookieText = String(t || "").trim();
+
+    if (!pendingNewAccount) {
+      inputMode = null;
+      pendingNewAccount = null;
+      tg.sendMessage(CHAT_ID, "Ошибка: аккаунт не выбран", keyboard);
+      return;
+    }
+
+    if (!cookieText.includes("access_token=")) {
+      tg.sendMessage(CHAT_ID, "Это не похоже на cookie. Вставь полную строку cookie с access_token=");
+      return;
+    }
+
+    const ua = BASE_HEADERS["User-Agent"] || process.env.USER_AGENT || "Mozilla/5.0";
+    const acc = pendingNewAccount;
+
+    await redis.set(`crbot:account:${acc}:cookie`, cookieText);
+    await redis.set(`crbot:account:${acc}:userAgent`, ua);
+    await redis.set(`crbot:account:${acc}:created`, String(Date.now()));
+
+    inputMode = null;
+    pendingNewAccount = null;
+
+    tg.sendMessage(
+      CHAT_ID,
+      `✅ Аккаунт ${acc.toUpperCase()} создан.\nТеперь на новом сервере ставь worker с WORKER_ID=${acc}w1.`,
+      keyboard
+    );
     return;
   }
 
@@ -986,34 +1077,31 @@ tg.on("message", async (msg) => {
   }
 
 
-  if (t === "👤 Аккаунт 1") {
-    tg.sendMessage(CHAT_ID, "👤 Аккаунт 1", {
-      reply_markup: {
-        keyboard: [
-          ["▶️ Старт A1", "⏸ Стоп A1"],
-          ["⚙️ Диапазон A1"],
-          ["🟢🔴 Воркер1 A1", "🟢🔴 Воркер2 A1"],
-          ["🟢🔴 Воркер3 A1"],
-          ["🍪 Куки A1"],
-          ["↩️ Назад"]
-        ],
-        resize_keyboard: true
-      }
-    });
+  if (t === "➕ Аккаунт") {
+    pendingNewAccount = await getNextAccountId();
+    inputMode = "new_account_cookie";
+
+    tg.sendMessage(
+      CHAT_ID,
+      `Создаём ${pendingNewAccount.toUpperCase()}.\nВставь полный COOKIE для нового аккаунта.`
+    );
     return;
   }
 
-  if (t === "👤 Аккаунт 2") {
-    tg.sendMessage(CHAT_ID, "👤 Аккаунт 2", {
+  const selectedAccount = accountFromButton(t);
+  if (selectedAccount) {
+    const workers = await getWorkersForAccount(selectedAccount);
+    const rows = [
+      [`▶️ Старт ${selectedAccount.toUpperCase()}`, `⏸ Стоп ${selectedAccount.toUpperCase()}`],
+      [`⚙️ Диапазон ${selectedAccount.toUpperCase()}`],
+      ...workers.map(id => [`🟢🔴 ${id}`]),
+      [`🍪 Куки ${selectedAccount.toUpperCase()}`],
+      ["↩️ Назад"]
+    ];
+
+    tg.sendMessage(CHAT_ID, accountDisplayName(selectedAccount), {
       reply_markup: {
-        keyboard: [
-          ["▶️ Старт A2", "⏸ Стоп A2"],
-          ["⚙️ Диапазон A2"],
-          ["🟢🔴 Воркер1 A2", "🟢🔴 Воркер2 A2"],
-          ["🟢🔴 Воркер3 A2"],
-          ["🍪 Куки A2"],
-          ["↩️ Назад"]
-        ],
+        keyboard: rows,
         resize_keyboard: true
       }
     });
@@ -1021,35 +1109,41 @@ tg.on("message", async (msg) => {
   }
 
   if (t === "🍪 Куки") {
+    const accounts = await getRegisteredAccounts();
+    const rows = accounts.map(acc => [`🍪 Куки ${acc.toUpperCase()}`]);
+    rows.push(["↩️ Назад"]);
+
     tg.sendMessage(CHAT_ID, "Выбери аккаунт для обновления cookie:", {
       reply_markup: {
-        keyboard: [
-          ["🍪 Куки A1"],
-          ["🍪 Куки A2"],
-          ["↩️ Назад"]
-        ],
+        keyboard: rows,
         resize_keyboard: true
       }
     });
     return;
   }
 
-  if (t === "🍪 Куки A1" || t === "🍪 Куки A2") {
-    cookieAccount = t.includes("A1") ? "a1" : "a2";
+  const cookieMatch = t.match(/^🍪 Куки (A\d+)$/i);
+  if (cookieMatch) {
+    cookieAccount = cookieMatch[1].toLowerCase();
     inputMode = "cookie";
-    tg.sendMessage(CHAT_ID, `Вставь полный COOKIE для ${cookieAccount}.`);
+
+    tg.sendMessage(
+      CHAT_ID,
+      `Вставь полный COOKIE для ${cookieAccount}.`
+    );
     return;
   }
+
+
 
   if (t === "⚙️ Воркеры") {
+    const accounts = await getRegisteredAccounts();
+    const rows = accounts.map(acc => [accountDisplayName(acc)]);
+    rows.push(["↩️ Назад"]);
+
     tg.sendMessage(CHAT_ID, "Выбери аккаунт:", {
       reply_markup: {
-        keyboard: [
-          ["👤 Аккаунт 1"],
-          ["👤 Аккаунт 2"],
-          ["👤 Аккаунт 3"],
-          ["↩️ Назад"]
-        ],
+        keyboard: rows,
         resize_keyboard: true
       }
     });
@@ -1057,27 +1151,11 @@ tg.on("message", async (msg) => {
   }
 
 
-  if ([
-    "🟢🔴 Воркер1 A1",
-    "🟢🔴 Воркер2 A1",
-    "🟢🔴 Воркер1 A2",
-    "🟢🔴 Воркер2 A2"
-  ].includes(t)) {
-
-    const map = {
-      "🟢🔴 Воркер1 A1": "a1w1",
-      "🟢🔴 Воркер2 A1": "a1w2",
-      "🟢🔴 Воркер3 A1": "a1w3",
-
-      "🟢🔴 Воркер1 A2": "a2w1",
-      "🟢🔴 Воркер2 A2": "a2w2",
-      "🟢🔴 Воркер3 A2": "a2w3"
-    };
-
-    const workerId = map[t];
+  const workerToggleMatch = t.trim().match(/^🟢🔴\s+(a\d+w\d+)$/i);
+  if (workerToggleMatch) {
+    const workerId = workerToggleMatch[1].toLowerCase();
 
     const cur = await getWorkerRange(workerId);
-
     const enabled = !(cur?.enabled ?? false);
 
     await setWorkerEnabled(workerId, enabled);
@@ -1093,36 +1171,38 @@ tg.on("message", async (msg) => {
   }
 
 
+
   if (t === "⚙️ Диапазоны") {
+    const accounts = await getRegisteredAccounts();
+    const rows = accounts.map(acc => [`⚙️ Диапазон ${acc.toUpperCase()}`]);
+    rows.push(["↩️ Назад"]);
+
     tg.sendMessage(CHAT_ID, "Выбери аккаунт:", {
       reply_markup: {
-        keyboard: [
-          ["⚙️ Диапазон A1"],
-          ["⚙️ Диапазон A2"],
-          ["↩️ Назад"]
-        ],
+        keyboard: rows,
         resize_keyboard: true
       }
     });
     return;
   }
 
-  if (["⚙️ Диапазон A1", "⚙️ Диапазон A2"].includes(t)) {
-    const map = {
-      "⚙️ Диапазон A1": "a1w1",
-      "⚙️ Диапазон A2": "a2w1"
-    };
-    rangeWorker = map[t];
+  const rangeMatchButton = t.match(/^⚙️ Диапазон (A\d+)$/i);
+  if (rangeMatchButton) {
+    const acc = rangeMatchButton[1].toLowerCase();
+    rangeWorker = `${acc}w1`;
     inputMode = "range";
 
     const cur = await getWorkerRange(rangeWorker);
     const current = cur ? `${cur.min}-${cur.max}` : "нет данных";
 
-    tg.sendMessage(CHAT_ID, `${t} сейчас: ${current}\nВведи новый диапазон: 500 3000`);
+    tg.sendMessage(
+      CHAT_ID,
+      `${t} сейчас: ${current}\nВведи новый диапазон: 500 3000`
+    );
     return;
   }
 
-  const rangeMatch = t.trim().match(/^a([1-2])w([1-3])\s+(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)$/i);
+  const rangeMatch = t.trim().match(/^a(\d+)w(\d+)\s+(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)$/i);
   if (rangeMatch) {
     const workerId = `a${rangeMatch[1]}w${rangeMatch[2]}`;
     const min = Number(rangeMatch[3]);
@@ -1218,9 +1298,7 @@ tg.on("message", async (msg) => {
       `WS / workers:\n${workersText}\n\n` +
       `Catching: ${catching ? "ON" : "OFF"}\n` +
       `Taking: ${taking ? "YES" : "NO"}\n` +
-      `Blacklist: ${blacklistEnabled ? "ON" : "OFF"} (${BLOCK_BRANDS.length})\n` +
-      `Mode: ${TEST_MODE ? "TEST" : "LIVE"}\n` +
-      `Active: ${activeOrder ? (activeOrder.source_id || activeOrder.sourceId || activeOrder.id) : "none"}`,
+      `Mode: ${TEST_MODE ? "TEST" : "LIVE"}`,
       keyboard
     );
     return;
