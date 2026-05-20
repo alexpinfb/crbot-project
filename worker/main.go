@@ -954,11 +954,8 @@ func main() {
 
 	_ = godotenv.Load(envFile)
 
-	cookie = os.Getenv("COOKIE")
+	cookie = getenv("COOKIE", "dummy")
 	userAgent = getenv("USER_AGENT", "Mozilla/5.0")
-	if cookie == "" {
-		panic("missing COOKIE")
-	}
 
 	provider = getenv("PROVIDER_ONLY", "nspk")
 	workerID = getenv("WORKER_ID", "v2go")

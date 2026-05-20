@@ -1106,7 +1106,7 @@ tg.on("message", async (msg) => {
     const workers = await getWorkersForAccount(selectedAccount);
     const rows = [
       [`▶️ Старт ${selectedAccount.toUpperCase()}`, `⏸ Стоп ${selectedAccount.toUpperCase()}`],
-      [`⚙️ Диапазон ${selectedAccount.toUpperCase()}`],
+      ...workers.map(id => [`⚙️ Диапазон ${id}`]),
       ...workers.map(id => [`🟢🔴 ${id}`]),
       [`🍪 Куки ${selectedAccount.toUpperCase()}`],
       ["↩️ Назад"]
@@ -1199,10 +1199,9 @@ tg.on("message", async (msg) => {
     return;
   }
 
-  const rangeMatchButton = t.match(/^⚙️ Диапазон (A\d+)$/i);
+  const rangeMatchButton = t.match(/^⚙️ Диапазон (a\d+w\d+)$/i);
   if (rangeMatchButton) {
-    const acc = rangeMatchButton[1].toLowerCase();
-    rangeWorker = `${acc}w1`;
+    rangeWorker = rangeMatchButton[1].toLowerCase();
     inputMode = "range";
 
     const cur = await getWorkerRange(rangeWorker);
