@@ -829,6 +829,19 @@ function accountFromButton(text) {
   return null;
 }
 
+function normalizeCookie(text) {
+  return String(text || "")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map(x => x.trim())
+    .filter(Boolean)
+    .join("; ")
+    .replace(/;+\s*;/g, ";")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/;\s*$/, "");
+}
+
 async function getWorkersForAccount(acc) {
   const ids = await getRegisteredWorkerIds();
   const out = [];
@@ -991,7 +1004,7 @@ tg.on("message", async (msg) => {
   }
 
   if (inputMode === "new_account_cookie") {
-    const cookieText = String(t || "").trim();
+    const cookieText = normalizeCookie(t);
 
     if (!pendingNewAccount) {
       inputMode = null;
@@ -1024,7 +1037,7 @@ tg.on("message", async (msg) => {
   }
 
   if (inputMode === "cookie") {
-    const cookieText = String(t || "").trim();
+    const cookieText = normalizeCookie(t);
 
     if (!cookieAccount) {
       inputMode = null;
