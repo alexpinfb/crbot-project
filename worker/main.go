@@ -671,7 +671,8 @@ func recoverActiveOrder(domain string, sourceID string, amount float64, elapsedM
 		}
 
 		st, _ := m["status"].(string)
-		if st != "processing" {
+		isUnlocked, _ := m["is_unlocked"].(bool)
+		if st != "processing" && !(st == "completed" && !isUnlocked) {
 			continue
 		}
 
@@ -686,6 +687,9 @@ func recoverActiveOrder(domain string, sourceID string, amount float64, elapsedM
 		}
 
 		ts, _ := m["processing_at"].(string)
+		if ts == "" {
+			ts, _ = m["completed_at"].(string)
+		}
 		t, err := time.Parse(time.RFC3339, ts)
 		if err != nil {
 			continue
@@ -700,7 +704,7 @@ func recoverActiveOrder(domain string, sourceID string, amount float64, elapsedM
 	}
 
 	if best == nil {
-		logf("ACTIVE_ORDER_RECOVER_FAIL id=%s amount=%.2f error=no_fresh_processing_order", sourceID, amount)
+		logf("ACTIVE_ORDER_RECOVER_FAIL id=%s amount=%.2f error=no_fresh_processing_or_completed_order", sourceID, amount)
 		return false
 	}
 
