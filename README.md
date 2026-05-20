@@ -96,14 +96,24 @@ tail -f live-go.log
 
 # 4. COOKIE
 
-В текущей версии cookie и user-agent задаются в worker/.env.
+Cookie можно обновлять через Telegram bot:
 
-После обновления cookie:
+1. Открыть меню
+2. Нажать "🍪 Куки"
+3. Выбрать "🍪 Куки A1" или "🍪 Куки A2"
+4. Вставить полный COOKIE
 
-nano .env
-systemctl restart crbot-go-worker
+Admin сохранит cookie в Redis:
 
-В следующей версии cookie можно будет менять через Telegram bot и хранить в Redis.
+- crbot:account:a1:cookie
+- crbot:account:a1:userAgent
+- crbot:account:a2:cookie
+- crbot:account:a2:userAgent
+
+Worker автоматически подхватывает новые cookie примерно за 3 секунды.
+Restart worker не нужен.
+
+Fallback: если в Redis cookie нет, worker использует COOKIE из worker/.env.
 
 ---
 

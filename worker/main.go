@@ -85,6 +85,61 @@ func getenv(k, def string) string {
 	return v
 }
 
+func accountID() string {
+	if v := getenv("ACCOUNT_ID", ""); v != "" {
+		return v
+	}
+	if i := strings.Index(workerID, "w"); i > 0 {
+		return workerID[:i]
+	}
+	return workerID
+}
+
+func applyAuthHeaders() {
+	if baseHeadersSend != nil {
+		baseHeadersSend.Set("Cookie", cookie)
+		baseHeadersSend.Set("User-Agent", userAgent)
+	}
+	if baseHeadersCR != nil {
+		baseHeadersCR.Set("Cookie", cookie)
+		baseHeadersCR.Set("User-Agent", userAgent)
+	}
+}
+
+func refreshAuthFromRedis() {
+	if rdb == nil || workerID == "" {
+		return
+	}
+
+	acc := accountID()
+	ck, ckErr := rdb.Get(ctx, "crbot:account:"+acc+":cookie").Result()
+	ua, uaErr := rdb.Get(ctx, "crbot:account:"+acc+":userAgent").Result()
+
+	changed := false
+
+	if ckErr == nil && ck != "" && ck != cookie {
+		cookie = ck
+		changed = true
+	}
+
+	if uaErr == nil && ua != "" && ua != userAgent {
+		userAgent = ua
+		changed = true
+	}
+
+	if changed {
+		applyAuthHeaders()
+		logf("AUTH_REDIS_UPDATED account=%s cookieLen=%d uaLen=%d", acc, len(cookie), len(userAgent))
+	}
+}
+
+func authRefreshLoop() {
+	for {
+		refreshAuthFromRedis()
+		time.Sleep(3 * time.Second)
+	}
+}
+
 func redisConnect() {
 	opt, err := redis.ParseURL(redisURL)
 	if err != nil {
@@ -890,11 +945,13 @@ func main() {
 	baseHeadersCR.Set("Referer", "https://app.cr.bot/")
 	baseHeadersCR.Set("User-Agent", userAgent)
 	baseHeadersCR.Set("Connection", "keep-alive")
+	applyAuthHeaders()
 
 	takeURLPrefixSend = "https://app.send.tg/internal/v1/p2c/payments/take/"
 	takeURLPrefixCR = "https://app.cr.bot/internal/v1/p2c/payments/take/"
 
 	redisConnect()
+	refreshAuthFromRedis()
 
 	logf("BOT_GO_START WORKER_ID=%s PROVIDER=%s", workerID, provider)
 
@@ -902,6 +959,7 @@ func main() {
 	cachedSettings.Store(getSettings())
 	cachedWorkerCfg.Store(getWorkerCfg())
 
+	go authRefreshLoop()
 	go settingsCacheLoop()
 	go statusLoop()
 	go warmupLoop()

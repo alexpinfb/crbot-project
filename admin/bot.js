@@ -256,6 +256,7 @@ let taking      = false;
 let activeOrder = null;
 let inputMode   = null;
 let rangeWorker = null;
+let cookieAccount = null;
 let ws1 = null, ws2 = null;
 const recentIds = new Set();
 
@@ -931,6 +932,34 @@ tg.on("message", async (msg) => {
     return;
   }
 
+  if (inputMode === "cookie") {
+    const cookieText = String(t || "").trim();
+
+    if (!cookieAccount) {
+      inputMode = null;
+      cookieAccount = null;
+      tg.sendMessage(CHAT_ID, "Ошибка: аккаунт не выбран", keyboard);
+      return;
+    }
+
+    if (!cookieText.includes("access_token=")) {
+      tg.sendMessage(CHAT_ID, "Это не похоже на cookie. Вставь полную строку cookie с access_token=");
+      return;
+    }
+
+    const ua = BASE_HEADERS["User-Agent"] || process.env.USER_AGENT || "Mozilla/5.0";
+
+    await redis.set(`crbot:account:${cookieAccount}:cookie`, cookieText);
+    await redis.set(`crbot:account:${cookieAccount}:userAgent`, ua);
+
+    inputMode = null;
+    const doneAccount = cookieAccount;
+    cookieAccount = null;
+
+    tg.sendMessage(CHAT_ID, `✅ Cookie сохранены для ${doneAccount}. Worker подхватит за 3 секунды.`, keyboard);
+    return;
+  }
+
   if (inputMode === "range") {
     const m = t.trim().match(/^(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)$/);
     if (!m || !rangeWorker) {
@@ -992,7 +1021,23 @@ tg.on("message", async (msg) => {
   }
 
   if (t === "🍪 Куки") {
-    tg.sendMessage(CHAT_ID, "🍪 Куки");
+    tg.sendMessage(CHAT_ID, "Выбери аккаунт для обновления cookie:", {
+      reply_markup: {
+        keyboard: [
+          ["🍪 Куки A1"],
+          ["🍪 Куки A2"],
+          ["↩️ Назад"]
+        ],
+        resize_keyboard: true
+      }
+    });
+    return;
+  }
+
+  if (t === "🍪 Куки A1" || t === "🍪 Куки A2") {
+    cookieAccount = t.includes("A1") ? "a1" : "a2";
+    inputMode = "cookie";
+    tg.sendMessage(CHAT_ID, `Вставь полный COOKIE для ${cookieAccount}.`);
     return;
   }
 
