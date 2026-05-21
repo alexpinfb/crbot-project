@@ -591,7 +591,7 @@ func takeFast(id string, amount float64, label string) {
 			continue
 		}
 		if r.Status == 403 && strings.Contains(r.Body, "MerchantPenalized") {
-			_ = rdb.Set(ctx, "crbot:catching", "0", 0).Err()
+			// Do not disable global catching on one worker penalty.
 			_ = rdb.Set(ctx, "crbot:worker:"+workerID, fmt.Sprintf(`{"min":%.0f,"max":%.0f,"enabled":false}`, minAmount, maxAmount), 0).Err()
 			logf("PENALTY_STOP worker=%s domain=%s id=%s amount=%.2f range=%.0f-%.0f body=%s", workerID, r.Domain, id, amount, minAmount, maxAmount, r.Body)
 		}
