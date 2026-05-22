@@ -865,7 +865,7 @@ func wsLoop(label string) {
 		if err != nil {
 			logf("%s_ERROR %s", label, err.Error())
 			wsLive.Store(false)
-			time.Sleep(300 * time.Millisecond)
+			time.Sleep(3 * time.Second)
 			continue
 		}
 
@@ -880,7 +880,7 @@ func wsLoop(label string) {
 		})
 
 		go func(conn *websocket.Conn) {
-			t := time.NewTicker(10 * time.Second)
+			t := time.NewTicker(25 * time.Second)
 			defer t.Stop()
 
 			for range t.C {
@@ -905,7 +905,7 @@ func wsLoop(label string) {
 			handlePacket(string(msg), c, label)
 		}
 
-		time.Sleep(300 * time.Millisecond)
+		time.Sleep(3 * time.Second)
 	}
 }
 
