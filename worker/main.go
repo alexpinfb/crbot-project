@@ -726,7 +726,7 @@ func recoverActiveOrder(domain string, sourceID string, amount float64, elapsedM
 	best["recovered"] = true
 
 	out, _ := json.Marshal(best)
-	if err := rdb.Set(ctx, "crbot:activeOrder", string(out), 30*time.Minute).Err(); err != nil {
+	if err := rdb.Set(ctx, "crbot:activeOrder", string(out), 30*time.Second).Err(); err != nil {
 		logf("ACTIVE_ORDER_RECOVER_FAIL id=%s error=redis:%s", sourceID, err.Error())
 		return false
 	}
@@ -769,7 +769,7 @@ func saveActiveOrderFromTake(domain string, sourceID string, amount float64, ela
 	data["saved_at_ms"] = time.Now().UnixMilli()
 
 	b, _ := json.Marshal(data)
-	if err := rdb.Set(ctx, "crbot:activeOrder", string(b), 30*time.Minute).Err(); err != nil {
+	if err := rdb.Set(ctx, "crbot:activeOrder", string(b), 30*time.Second).Err(); err != nil {
 		logf("ACTIVE_ORDER_SAVE_FAIL id=%s error=redis:%s", sourceID, err.Error())
 		return
 	}
