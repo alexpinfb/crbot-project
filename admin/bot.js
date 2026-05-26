@@ -732,8 +732,23 @@ tg.on("callback_query", async (q) => {
         await tg.answerCallbackQuery(q.id, { text: "Подтверждено ✅" });
         tg.sendMessage(CHAT_ID, `✅ Ордер ${id} подтверждён через ${order?.worker_id || order?.workerId || "unknown"}`, keyboard);
       } else {
-        await tg.answerCallbackQuery(q.id, { text: txt || "Ошибка", show_alert: true });
-        tg.sendMessage(CHAT_ID, `❌ Complete fail ${id} / ${order?.worker_id || order?.workerId || "unknown"}: ${txt}`, keyboard);
+        console.log(new Date().toISOString(), "COMPLETE_RESULT", {
+          id,
+          statusCode,
+          worker: order?.worker_id || order?.workerId,
+          body: txt
+        });
+
+        if (txt && txt.includes("InvalidStatus")) {
+          activeOrder = null;
+          await clearSharedActive();
+          await redis.del("crbot:takeLock", "crbot:takeLock:a1", "crbot:takeLock:a2");
+          await tg.answerCallbackQuery(q.id, { text: "Статус уже изменился, актив снят ⚠️" });
+          tg.sendMessage(CHAT_ID, `⚠️ Complete skipped ${id} / ${order?.worker_id || order?.workerId || "unknown"}: InvalidStatus, active очищен`, keyboard);
+        } else {
+          await tg.answerCallbackQuery(q.id, { text: txt || "Ошибка", show_alert: true });
+          tg.sendMessage(CHAT_ID, `❌ Complete fail ${id} / ${order?.worker_id || order?.workerId || "unknown"}: ${txt}`, keyboard);
+        }
       }
     }
   } catch (e) {
