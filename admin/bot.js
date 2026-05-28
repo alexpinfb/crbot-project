@@ -429,28 +429,16 @@ async function takeFast(id, amount, label) {
 
 // ── SEND ORDER TO TG ─────────────────────────────────────────────────
 async function sendOrderToTelegram(data, elapsed) {
-  const worker =
-  data.workerId ||
-  data.worker_id ||
-  data.source_worker ||
-  "unknown";
+  const worker = data.workerId || data.worker_id || data.source_worker || "unknown";
+  const elapsedMs = data.elapsed_ms || elapsed || 0;
+  const via = data.via || data.source_ws || "WS1";
+  const winnerDomain = data.winner_domain || data.source_domain || "unknown";
 
-const elapsedMs =
-  data.elapsed_ms ||
-  elapsed ||
-  0;
+  const orderUrl = typeof data.url === "string" && data.url.startsWith("http") ? data.url : "";
+  const orderAmount = data.in_amount || data.amount_fiat || data.source_amount || data.amount || "unknown";
+  const orderBrand = data.brand_name || data.brand || "unknown";
 
-const via =
-  data.via ||
-  data.source_ws ||
-  "WS1";
-
-const winnerDomain =
-  data.winner_domain ||
-  data.source_domain ||
-  "unknown";
-
-const text =
+  const text =
 `✅ Ордер взят
 
 👷 Аккаунт: ${data.accountName || "unknown"}
@@ -459,22 +447,23 @@ const text =
 🌐 ${winnerDomain}
 
 ID: ${data.id}
-Сумма: ${data.in_amount} RUB
-Магазин: ${data.brand_name}
+Сумма: ${orderAmount} RUB
+Магазин: ${orderBrand}
 QR:
-${data.url}`;
+${orderUrl || "нет url"}`;
 
-  const reply_markup = {
-    inline_keyboard: [
-      [{ text: "🔗 Открыть QR", url: data.url }],
-      [{ text: "📋 Активные заявки", url: "https://app.send.tg/p2c/payments?tab=active" }],
-      [{ text: "✅ Подтвердить", callback_data: `complete:${data.id}` }],
-      [{ text: "🔓 Unlock", callback_data: "unlock" }]
-    ]
-  };
+  const buttons = [];
+  if (orderUrl) buttons.push([{ text: "🔗 Открыть QR", url: orderUrl }]);
+  buttons.push([{ text: "📋 Активные заявки", url: "https://app.send.tg/p2c/payments?tab=active" }]);
+  buttons.push([{ text: "✅ Подтвердить", callback_data: `complete:${data.id}` }]);
+  buttons.push([{ text: "🔓 Unlock", callback_data: "unlock" }]);
+
+  const reply_markup = { inline_keyboard: buttons };
 
   try {
-    const qrBuffer = await QRCode.toBuffer(data.url, {
+    if (!orderUrl) throw new Error("missing order url");
+
+    const qrBuffer = await QRCode.toBuffer(orderUrl, {
       type: "png",
       width: 900,
       margin: 2
@@ -951,6 +940,7 @@ async function goActiveOrderWatcher() {
     activeOrder = order;
 
     log(`GO_ACTIVE_ORDER_NOTIFY id=${order.id} amount=${order.in_amount || order.amount}`);
+    log(`GO_ACTIVE_ORDER_FIELDS id=${order.id} in_amount=${order.in_amount} amount=${order.amount} amount_fiat=${order.amount_fiat} out_amount=${order.out_amount} source_amount=${order.source_amount} status=${order.status}`);
     sendOrderToTelegram(order, "worker");
   } catch (e) {
     log(`GO_ACTIVE_ORDER_WATCH_ERR ${e.message}`);
