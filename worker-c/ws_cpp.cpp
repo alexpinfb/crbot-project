@@ -8,6 +8,9 @@
 #include <string>
 
 extern "C" void parse_event(const char *msg);
+extern "C" {
+#include "http_keepalive.h"
+}
 
 typedef websocketpp::client<websocketpp::config::asio_tls_client> client;
 
@@ -94,6 +97,7 @@ int main() {
     c.set_open_handler([&](websocketpp::connection_hdl) {
         std::cout << "CPP_WS_READY\n";
         redis_heartbeat();
+            keepalive_warmup_once();
     });
 
     c.set_message_handler([&](websocketpp::connection_hdl hdl, client::message_ptr msg) {
@@ -105,6 +109,7 @@ int main() {
             c.send(hdl, "3", websocketpp::frame::opcode::text);
             std::cout << "CPP_WS_SEND 3\n";
             redis_heartbeat();
+            keepalive_warmup_once();
             return;
         }
 
