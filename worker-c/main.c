@@ -5,6 +5,7 @@
 #include <hiredis/hiredis.h>
 #include <curl/curl.h>
 #include "ws_readonly.h"
+#include "ws_client.h"
 
 static void load_env(const char *path) {
     FILE *f = fopen(path, "r");
@@ -285,14 +286,10 @@ int main(void) {
         fprintf(stderr, "http accounts check failed\n");
     }
 
-    while (1) {
-        if (redis_set_worker_info() != 0) {
-            fprintf(stderr, "heartbeat failed\n");
-            return 1;
-        }
+    redis_set_worker_info();
 
-        sleep(5);
-    }
+    printf("C_WS_START\n");
+    fflush(stdout);
 
-    return 0;
+    return ws_run_forever();
 }
