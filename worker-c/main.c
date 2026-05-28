@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <hiredis/hiredis.h>
 
 static void load_env(const char *path) {
@@ -156,5 +157,14 @@ int main(void) {
         return 1;
     }
 
-    return redis_set_worker_info();
+    while (1) {
+        if (redis_set_worker_info() != 0) {
+            fprintf(stderr, "heartbeat failed\n");
+            return 1;
+        }
+
+        sleep(5);
+    }
+
+    return 0;
 }
