@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <hiredis/hiredis.h>
 #include <curl/curl.h>
+#include "ws_readonly.h"
 
 static void load_env(const char *path) {
     FILE *f = fopen(path, "r");
