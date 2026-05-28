@@ -1,6 +1,8 @@
 #include <websocketpp/config/asio_client.hpp>
 #include <websocketpp/client.hpp>
 
+#include <hiredis/hiredis.h>
+
 #include <iostream>
 #include <cstdlib>
 #include <string>
@@ -12,6 +14,59 @@ typedef websocketpp::client<websocketpp::config::asio_tls_client> client;
 static std::string envv(const char *k) {
     const char *v = std::getenv(k);
     return v ? std::string(v) : std::string();
+}
+
+static void redis_heartbeat() {
+    std::string addr = envv("REDIS_ADDR");
+    std::string port_s = envv("REDIS_PORT");
+    std::string pass = envv("REDIS_PASSWORD");
+    std::string worker = envv("WORKER_ID");
+    std::string account = envv("ACCOUNT_ID");
+
+    if (addr.empty() || pass.empty() || worker.empty()) {
+        std::cerr << "CPP_HEARTBEAT_SKIP missing redis env\n";
+        return;
+    }
+
+    int port = port_s.empty() ? 6379 : std::atoi(port_s.c_str());
+
+    redisContext *rc = redisConnect(addr.c_str(), port);
+
+    if (!rc || rc->err) {
+        std::cerr << "CPP_HEARTBEAT_CONNECT_FAIL\n";
+        if (rc) redisFree(rc);
+        return;
+    }
+
+    redisReply *auth = (redisReply *)redisCommand(rc, "AUTH %s", pass.c_str());
+    if (auth) freeReplyObject(auth);
+
+    std::string key = "crbot:workerInfo:" + worker;
+
+    std::string json =
+        std::string("{") +
+        "\"workerId\":\"" + worker + "\"," +
+        "\"worker_id\":\"" + worker + "\"," +
+        "\"accountId\":\"" + account + "\"," +
+        "\"account_id\":\"" + account + "\"," +
+        "\"instance\":\"cpp-readonly\"," +
+        "\"online\":true," +
+        "\"provider\":\"cpp\"" +
+        "}";
+
+    redisReply *r = (redisReply *)redisCommand(
+        rc,
+        "SETEX %s 30 %s",
+        key.c_str(),
+        json.c_str()
+    );
+
+    if (r) {
+        std::cout << "CPP_HEARTBEAT_OK " << key << "\n";
+        freeReplyObject(r);
+    }
+
+    redisFree(rc);
 }
 
 int main() {
@@ -38,6 +93,7 @@ int main() {
 
     c.set_open_handler([&](websocketpp::connection_hdl) {
         std::cout << "CPP_WS_READY\n";
+        redis_heartbeat();
     });
 
     c.set_message_handler([&](websocketpp::connection_hdl hdl, client::message_ptr msg) {
@@ -48,6 +104,7 @@ int main() {
         if (p == "2") {
             c.send(hdl, "3", websocketpp::frame::opcode::text);
             std::cout << "CPP_WS_SEND 3\n";
+            redis_heartbeat();
             return;
         }
 
