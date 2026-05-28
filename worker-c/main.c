@@ -143,6 +143,74 @@ static int redis_set_worker_info(void) {
     return 0;
 }
 
+
+static int redis_get_auth(void) {
+    const char *addr = getenv("REDIS_ADDR");
+    const char *port_s = getenv("REDIS_PORT");
+    const char *pass = getenv("REDIS_PASSWORD");
+    const char *account = getenv("ACCOUNT_ID");
+
+    int port = port_s ? atoi(port_s) : 6379;
+
+    if (!addr || !pass || !account) {
+        fprintf(stderr, "missing redis env or ACCOUNT_ID\n");
+        return 1;
+    }
+
+    redisContext *c = redisConnect(addr, port);
+
+    if (!c || c->err) {
+        fprintf(stderr, "redis connect error: %s\n", c ? c->errstr : "null context");
+        if (c) redisFree(c);
+        return 1;
+    }
+
+    redisReply *r = redisCommand(c, "AUTH %s", pass);
+
+    if (!r || r->type == REDIS_REPLY_ERROR) {
+        fprintf(stderr, "redis auth error: %s\n", r ? r->str : "null reply");
+        if (r) freeReplyObject(r);
+        redisFree(c);
+        return 1;
+    }
+
+    freeReplyObject(r);
+
+    char cookie_key[256];
+    char ua_key[256];
+
+    snprintf(cookie_key, sizeof(cookie_key), "crbot:account:%s:cookie", account);
+    snprintf(ua_key, sizeof(ua_key), "crbot:account:%s:userAgent", account);
+
+    r = redisCommand(c, "GET %s", cookie_key);
+
+    if (!r || r->type == REDIS_REPLY_NIL) {
+        fprintf(stderr, "cookie not found key=%s\n", cookie_key);
+        if (r) freeReplyObject(r);
+        redisFree(c);
+        return 1;
+    }
+
+    printf("AUTH_COOKIE key=%s len=%zu start=%.32s\n", cookie_key, strlen(r->str), r->str);
+    freeReplyObject(r);
+
+    r = redisCommand(c, "GET %s", ua_key);
+
+    if (!r || r->type == REDIS_REPLY_NIL) {
+        fprintf(stderr, "userAgent not found key=%s\n", ua_key);
+        if (r) freeReplyObject(r);
+        redisFree(c);
+        return 1;
+    }
+
+    printf("AUTH_UA key=%s len=%zu value=%s\n", ua_key, strlen(r->str), r->str);
+
+    freeReplyObject(r);
+    redisFree(c);
+
+    return 0;
+}
+
 int main(void) {
     load_env(".env");
 
@@ -154,6 +222,10 @@ int main(void) {
     printf("REDIS_ADDR=%s\n", redis ? redis : "(null)");
 
     if (redis_ping() != 0) {
+        return 1;
+    }
+
+    if (redis_get_auth() != 0) {
         return 1;
     }
 
