@@ -67,6 +67,44 @@ static int amount_allowed(const char *amount_s) {
     return 1;
 }
 
+
+static void save_candidate(const char *id, const char *amount, const char *brand) {
+    const char *addr = getenv("REDIS_ADDR");
+    const char *pass = getenv("REDIS_PASSWORD");
+    const char *worker = getenv("WORKER_ID");
+
+    if (!addr || !pass || !worker)
+        return;
+
+    redisContext *c = redisConnect(addr, 6379);
+    if (!c || c->err)
+        return;
+
+    redisReply *auth = redisCommand(c, "AUTH %s", pass);
+    if (auth) freeReplyObject(auth);
+
+    char json[1024];
+    snprintf(
+        json,
+        sizeof(json),
+        "{\"id\":\"%s\",\"amount\":\"%s\",\"brand\":\"%s\",\"worker\":\"%s\",\"ts\":%ld}",
+        id,
+        amount,
+        brand,
+        worker,
+        (long)time(NULL)
+    );
+
+    redisReply *r = redisCommand(c, "SETEX crbot:candidateTake:%s 60 %s", id, json);
+    if (r) freeReplyObject(r);
+
+    printf("TAKE_CANDIDATE_SAVE id=%s amount=%s worker=%s\n", id, amount, worker);
+    fflush(stdout);
+
+    redisFree(c);
+}
+
+
 void take_dry(const char *id, const char *amount, const char *brand) {
 
     if (!amount_allowed(amount)) {
@@ -102,4 +140,6 @@ void take_dry(const char *id, const char *amount, const char *brand) {
     );
 
     fflush(stdout);
+
+    save_candidate(id, amount, brand);
 }
