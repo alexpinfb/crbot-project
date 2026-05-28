@@ -3,6 +3,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <hiredis/hiredis.h>
+#include <curl/curl.h>
 
 static void load_env(const char *path) {
     FILE *f = fopen(path, "r");
@@ -192,6 +193,7 @@ static int redis_get_auth(void) {
     }
 
     printf("AUTH_COOKIE key=%s len=%zu start=%.32s\n", cookie_key, strlen(r->str), r->str);
+    setenv("CRBOT_COOKIE", r->str, 1);
     freeReplyObject(r);
 
     r = redisCommand(c, "GET %s", ua_key);
@@ -204,11 +206,60 @@ static int redis_get_auth(void) {
     }
 
     printf("AUTH_UA key=%s len=%zu value=%s\n", ua_key, strlen(r->str), r->str);
+    setenv("CRBOT_UA", r->str, 1);
 
     freeReplyObject(r);
     redisFree(c);
 
     return 0;
+}
+
+
+static int http_accounts_check(void) {
+    const char *cookie = getenv("CRBOT_COOKIE");
+    const char *ua = getenv("CRBOT_UA");
+
+    if (!cookie || !ua) {
+        fprintf(stderr, "missing CRBOT_COOKIE or CRBOT_UA\n");
+        return 1;
+    }
+
+    CURL *curl = curl_easy_init();
+
+    if (!curl) {
+        fprintf(stderr, "curl_easy_init failed\n");
+        return 1;
+    }
+
+    struct curl_slist *headers = NULL;
+    char cookie_header[4096];
+    char ua_header[1024];
+
+    snprintf(cookie_header, sizeof(cookie_header), "Cookie: %s", cookie);
+    snprintf(ua_header, sizeof(ua_header), "User-Agent: %s", ua);
+
+    headers = curl_slist_append(headers, cookie_header);
+    headers = curl_slist_append(headers, ua_header);
+    headers = curl_slist_append(headers, "Origin: https://app.cr.bot");
+    headers = curl_slist_append(headers, "Referer: https://app.cr.bot/p2c/payments?tab=active");
+    headers = curl_slist_append(headers, "Accept: application/json");
+
+    curl_easy_setopt(curl, CURLOPT_URL, "https://app.cr.bot/internal/v1/p2c/accounts");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+    curl_easy_setopt(curl, CURLOPT_NOBODY, 0L);
+
+    CURLcode res = curl_easy_perform(curl);
+
+    long code = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
+
+    printf("\nHTTP_ACCOUNTS code=%ld curl=%d\n", code, (int)res);
+
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+
+    return (res == CURLE_OK && code >= 200 && code < 500) ? 0 : 1;
 }
 
 int main(void) {
@@ -227,6 +278,10 @@ int main(void) {
 
     if (redis_get_auth() != 0) {
         return 1;
+    }
+
+    if (http_accounts_check() != 0) {
+        fprintf(stderr, "http accounts check failed\n");
     }
 
     while (1) {

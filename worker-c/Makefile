@@ -1,7 +1,7 @@
 .RECIPEPREFIX := >
 CC=gcc
 CFLAGS=-O2 -Wall -Wextra
-LDFLAGS=-lhiredis
+LDFLAGS=-lhiredis -lcurl
 
 all:
 >$(CC) $(CFLAGS) main.c -o worker-c $(LDFLAGS)
