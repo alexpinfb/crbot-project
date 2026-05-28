@@ -83,6 +83,65 @@ static int redis_ping(void) {
     return 0;
 }
 
+
+static int redis_set_worker_info(void) {
+    const char *addr = getenv("REDIS_ADDR");
+    const char *port_s = getenv("REDIS_PORT");
+    const char *pass = getenv("REDIS_PASSWORD");
+    const char *worker = getenv("WORKER_ID");
+
+    int port = port_s ? atoi(port_s) : 6379;
+
+    if (!addr || !pass || !worker) {
+        fprintf(stderr, "missing redis env or WORKER_ID\n");
+        return 1;
+    }
+
+    redisContext *c = redisConnect(addr, port);
+
+    if (!c || c->err) {
+        fprintf(stderr, "redis connect error: %s\n", c ? c->errstr : "null context");
+        if (c) redisFree(c);
+        return 1;
+    }
+
+    redisReply *r = redisCommand(c, "AUTH %s", pass);
+
+    if (!r || r->type == REDIS_REPLY_ERROR) {
+        fprintf(stderr, "redis auth error: %s\n", r ? r->str : "null reply");
+        if (r) freeReplyObject(r);
+        redisFree(c);
+        return 1;
+    }
+
+    freeReplyObject(r);
+
+    char key[256];
+    snprintf(key, sizeof(key), "crbot:workerInfo:%s", worker);
+
+    char body[1024];
+    snprintf(body, sizeof(body),
+        "{\"workerId\":\"%s\",\"worker_id\":\"%s\",\"accountId\":\"c-test\",\"account_id\":\"c-test\",\"instance\":\"c-worker-test\",\"online\":true,\"provider\":\"c\",\"updated\":0}",
+        worker, worker
+    );
+
+    r = redisCommand(c, "SET %s %s EX 15", key, body);
+
+    if (!r || r->type == REDIS_REPLY_ERROR) {
+        fprintf(stderr, "redis SET workerInfo error: %s\n", r ? r->str : "null reply");
+        if (r) freeReplyObject(r);
+        redisFree(c);
+        return 1;
+    }
+
+    printf("WORKER_INFO_SET key=%s reply=%s\n", key, r->str ? r->str : "(null)");
+
+    freeReplyObject(r);
+    redisFree(c);
+
+    return 0;
+}
+
 int main(void) {
     load_env(".env");
 
@@ -93,5 +152,9 @@ int main(void) {
     printf("WORKER_ID=%s\n", worker ? worker : "(null)");
     printf("REDIS_ADDR=%s\n", redis ? redis : "(null)");
 
-    return redis_ping();
+    if (redis_ping() != 0) {
+        return 1;
+    }
+
+    return redis_set_worker_info();
 }
