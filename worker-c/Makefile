@@ -14,7 +14,8 @@ all:
 
 ws-cpp:
 >$(CC) $(CFLAGS) -c ws_readonly.c -o ws_readonly.o
->$(CXX) $(CXXFLAGS) ws_cpp.cpp ws_readonly.o -o ws_cpp $(LD_CPP)
+>$(CC) $(CFLAGS) -c take_dry.c -o take_dry.o
+>$(CXX) $(CXXFLAGS) ws_cpp.cpp ws_readonly.o take_dry.o -o ws_cpp $(LD_CPP)
 
 clean:
->rm -f worker-c ws_cpp ws_readonly.o parse_event ws_probe
+>rm -f worker-c ws_cpp ws_readonly.o take_dry.o parse_event ws_probe

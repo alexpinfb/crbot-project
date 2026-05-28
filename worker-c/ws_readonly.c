@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include "take_dry.h"
 #include <string.h>
 
 static int extract_str(const char *s, const char *key, char *out, size_t out_sz) {
@@ -52,5 +53,7 @@ void parse_event(const char *msg) {
         );
 
         fflush(stdout);
+
+        take_dry(id, amount, brand);
     }
 }
