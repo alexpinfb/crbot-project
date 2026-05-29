@@ -15,8 +15,9 @@ all:
 ws-cpp:
 >$(CC) $(CFLAGS) -c ws_readonly.c -o ws_readonly.o
 >$(CC) $(CFLAGS) -c take_dry.c -o take_dry.o
+>$(CC) $(CFLAGS) -c take_http.c -o take_http.o
 >$(CC) $(CFLAGS) -c http_keepalive.c -o http_keepalive.o
->$(CXX) $(CXXFLAGS) ws_cpp.cpp ws_readonly.o take_dry.o http_keepalive.o -o ws_cpp $(LD_CPP)
+>$(CXX) $(CXXFLAGS) ws_cpp.cpp ws_readonly.o take_dry.o take_http.o http_keepalive.o -o ws_cpp $(LD_CPP)
 
 clean:
->rm -f worker-c ws_cpp ws_readonly.o take_dry.o http_keepalive.o parse_event ws_probe
+>rm -f worker-c ws_cpp ws_readonly.o take_dry.o take_http.o http_keepalive.o parse_event ws_probe
