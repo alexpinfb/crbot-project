@@ -55,7 +55,8 @@ void parse_event(const char *msg) {
 
         fflush(stdout);
 
-        take_dry(id, amount, brand);
-        take_http_stub(id, amount, brand);
+        if (take_dry(id, amount, brand)) {
+            take_http_stub(id, amount, brand);
+        }
     }
 }

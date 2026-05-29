@@ -105,12 +105,12 @@ static void save_candidate(const char *id, const char *amount, const char *brand
 }
 
 
-void take_dry(const char *id, const char *amount, const char *brand) {
+int take_dry(const char *id, const char *amount, const char *brand) {
 
     if (!amount_allowed(amount)) {
         printf("TAKE_SKIP_FILTER id=%s amount=%s brand=%s\n", id, amount, brand);
         fflush(stdout);
-        return;
+        return 0;
     }
 
     time_t now = time(NULL);
@@ -118,13 +118,13 @@ void take_dry(const char *id, const char *amount, const char *brand) {
     if (strcmp(last_id, id) == 0) {
         printf("TAKE_SKIP_DUP id=%s\n", id);
         fflush(stdout);
-        return;
+        return 0;
     }
 
     if ((now - last_take_ts) < 5) {
         printf("TAKE_SKIP_RATE id=%s wait=%ld\n", id, (long)(5 - (now - last_take_ts)));
         fflush(stdout);
-        return;
+        return 0;
     }
 
     snprintf(last_id, sizeof(last_id), "%s", id);
@@ -142,4 +142,6 @@ void take_dry(const char *id, const char *amount, const char *brand) {
     fflush(stdout);
 
     save_candidate(id, amount, brand);
+
+    return 1;
 }
