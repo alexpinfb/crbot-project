@@ -54,6 +54,8 @@ void take_http_stub(const char *id, const char *amount, const char *brand) {
     h = curl_slist_append(h, "Origin: https://app.send.tg");
     h = curl_slist_append(h, "Referer: https://app.send.tg/");
     h = curl_slist_append(h, "Connection: keep-alive");
+    h = curl_slist_append(h, "Accept: application/json");
+    h = curl_slist_append(h, "Content-Length: 0");
 
     curl_easy_setopt(c, CURLOPT_URL, url);
     curl_easy_setopt(c, CURLOPT_POST, 1L);
