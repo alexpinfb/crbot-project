@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <curl/curl.h>
+#include <hiredis/hiredis.h>
 #include "take_http.h"
 
 static size_t capture(char *ptr, size_t size, size_t nmemb, void *userdata) {
@@ -18,6 +19,32 @@ static size_t capture(char *ptr, size_t size, size_t nmemb, void *userdata) {
     }
 
     return size * nmemb;
+}
+
+
+static void save_success(const char *source_id, const char *amount, const char *brand, const char *body) {
+    const char *addr = getenv("REDIS_ADDR");
+    const char *pass = getenv("REDIS_PASSWORD");
+    const char *worker = getenv("WORKER_ID");
+
+    if (!addr || !pass || !worker) return;
+
+    redisContext *rc = redisConnect(addr, 6379);
+    if (!rc || rc->err) return;
+
+    redisReply *auth = redisCommand(rc, "AUTH %s", pass);
+    if (auth) freeReplyObject(auth);
+
+    redisReply *r1 = redisCommand(rc, "SETEX crbot:cppTake:%s 600 %s", source_id, body);
+    if (r1) freeReplyObject(r1);
+
+    redisReply *r2 = redisCommand(rc, "SETEX crbot:activeOrder 600 %s", body);
+    if (r2) freeReplyObject(r2);
+
+    printf("TAKE_SUCCESS_SAVE id=%s amount=%s brand=%s worker=%s\n", source_id, amount, brand, worker);
+    fflush(stdout);
+
+    redisFree(rc);
 }
 
 void take_http_stub(const char *id, const char *amount, const char *brand) {
@@ -66,6 +93,9 @@ void take_http_stub(const char *id, const char *amount, const char *brand) {
     curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, capture);
     curl_easy_setopt(c, CURLOPT_WRITEDATA, body);
     curl_easy_setopt(c, CURLOPT_TIMEOUT_MS, 3000L);
+    struct curl_slist *resolve = NULL;
+    resolve = curl_slist_append(resolve, "app.send.tg:443:138.249.21.1");
+    curl_easy_setopt(c, CURLOPT_RESOLVE, resolve);
 
     CURLcode res = curl_easy_perform(c);
 
@@ -81,6 +111,11 @@ void take_http_stub(const char *id, const char *amount, const char *brand) {
            body);
     fflush(stdout);
 
+    if (code == 200 && body[0]) {
+        save_success(id, amount, brand, body);
+    }
+
     if (h) curl_slist_free_all(h);
+    if (resolve) curl_slist_free_all(resolve);
     curl_easy_cleanup(c);
 }

@@ -121,12 +121,7 @@ int take_dry(const char *id, const char *amount, const char *brand) {
         return 0;
     }
 
-    if ((now - last_take_ts) < 5) {
-        printf("TAKE_SKIP_RATE id=%s wait=%ld\n", id, (long)(5 - (now - last_take_ts)));
-        fflush(stdout);
-        return 0;
-    }
-
+    /* rate limit disabled for live C take */
     snprintf(last_id, sizeof(last_id), "%s", id);
     last_take_ts = now;
 
