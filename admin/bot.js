@@ -949,6 +949,39 @@ async function goActiveOrderWatcher() {
 
 setInterval(goActiveOrderWatcher, 500);
 
+// ── C++ CANDIDATE TAKE WATCHER ─────────────────────────────────────────
+let lastCandidateTakeKey = null;
+
+async function candidateTakeWatcher() {
+  try {
+    const keys = await redis.keys("crbot:candidateTake:*");
+    if (!keys || !keys.length) return;
+
+    keys.sort();
+    const key = keys[keys.length - 1];
+
+    if (key === lastCandidateTakeKey) return;
+    lastCandidateTakeKey = key;
+
+    const raw = await redis.get(key);
+    if (!raw) return;
+
+    const c = JSON.parse(raw);
+
+    log(`CANDIDATE_TAKE_NOTIFY key=${key} id=${c.id} amount=${c.amount} worker=${c.worker}`);
+
+    tg.sendMessage(
+      CHAT_ID,
+      `🧪 C++ candidate take\n\nID: ${c.id}\nСумма: ${c.amount} RUB\nМагазин: ${c.brand || "unknown"}\nWorker: ${c.worker || "unknown"}`
+    );
+  } catch (e) {
+    log(`CANDIDATE_TAKE_WATCH_ERR ${e.message}`);
+  }
+}
+
+setInterval(candidateTakeWatcher, 1500);
+
+
 // ── TG MESSAGES ───────────────────────────────────────────────────────
 tg.on("message", async (msg) => {
   if (!isAllowedChat(msg.chat.id)) {

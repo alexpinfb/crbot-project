@@ -95,7 +95,7 @@ static void save_candidate(const char *id, const char *amount, const char *brand
         (long)time(NULL)
     );
 
-    redisReply *r = redisCommand(c, "SETEX crbot:candidateTake:%s 60 %s", id, json);
+    redisReply *r = redisCommand(c, "SETEX crbot:candidateTake:%s 300 %s", id, json);
     if (r) freeReplyObject(r);
 
     printf("TAKE_CANDIDATE_SAVE id=%s amount=%s worker=%s\n", id, amount, worker);
