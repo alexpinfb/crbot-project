@@ -979,7 +979,7 @@ async function candidateTakeWatcher() {
   }
 }
 
-setInterval(candidateTakeWatcher, 1500);
+// setInterval(candidateTakeWatcher, 1500);
 
 
 // ── TG MESSAGES ───────────────────────────────────────────────────────
