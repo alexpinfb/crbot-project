@@ -25,4 +25,8 @@ export CRBOT_UA="$(
 
 echo "RUN_WS_CPP WORKER_ID=${WORKER_ID:-unknown} ACCOUNT_ID=${ACCOUNT_ID:-unknown} cookieLen=${#CRBOT_COOKIE} uaLen=${#CRBOT_UA}"
 
-exec ./ws_cpp
+while true; do
+  ./ws_cpp
+  echo "RUN_WS_CPP_RESTART sleep=1"
+  sleep 1
+done
