@@ -656,8 +656,9 @@ tg.on("callback_query", async (q) => {
         if (raw) order = JSON.parse(raw);
       } catch {}
 
-      const id = String(order?.id || cbId);
-      const domain = String(order?.domain || "app.send.tg").split("@")[0] || "app.send.tg";
+      const payload = order?.data || order || {};
+      const id = String(payload?.id || order?.id || cbId);
+      const domain = String(order?.source_domain || order?.domain || "app.send.tg").split("@")[0] || "app.send.tg";
       const completeCookie = order?.complete_cookie || order?.cookie || COOKIE;
       const completeUA = order?.complete_user_agent || order?.user_agent || BASE_HEADERS["User-Agent"] || "Mozilla/5.0";
 
@@ -933,15 +934,16 @@ async function goActiveOrderWatcher() {
     if (!raw) return;
 
     const order = JSON.parse(raw);
-    const key = `${order.id || ""}:${order.payload || order.url || ""}`;
+    const payload = order.data || order;
+    const key = `${payload.id || order.id || ""}:${payload.payload || payload.url || order.payload || order.url || ""}`;
 
     if (!key || key === lastGoActiveOrderKey) return;
 
     lastGoActiveOrderKey = key;
     activeOrder = order;
 
-    log(`GO_ACTIVE_ORDER_NOTIFY id=${order.id} amount=${order.in_amount || order.amount}`);
-    log(`GO_ACTIVE_ORDER_FIELDS id=${order.id} in_amount=${order.in_amount} amount=${order.amount} amount_fiat=${order.amount_fiat} out_amount=${order.out_amount} source_amount=${order.source_amount} status=${order.status}`);
+    log(`GO_ACTIVE_ORDER_NOTIFY id=${payload.id || order.id} amount=${payload.in_amount || order.amount}`);
+    log(`GO_ACTIVE_ORDER_FIELDS id=${payload.id || order.id} in_amount=${payload.in_amount} amount=${order.amount} amount_fiat=${payload.amount_fiat} out_amount=${payload.out_amount} source_amount=${order.source_amount} status=${payload.status}`);
     sendOrderToTelegram(order, "worker");
   } catch (e) {
     log(`GO_ACTIVE_ORDER_WATCH_ERR ${e.message}`);
