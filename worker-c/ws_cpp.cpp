@@ -101,6 +101,21 @@ int main() {
             keepalive_warmup_once();
     });
 
+    c.set_fail_handler([&](websocketpp::connection_hdl hdl) {
+        client::connection_ptr con = c.get_con_from_hdl(hdl);
+        std::cout << "CPP_WS_FAIL ec=" << con->get_ec().message()
+                  << " state=" << con->get_state()
+                  << "\n";
+    });
+
+    c.set_close_handler([&](websocketpp::connection_hdl hdl) {
+        client::connection_ptr con = c.get_con_from_hdl(hdl);
+        std::cout << "CPP_WS_CLOSE code=" << con->get_remote_close_code()
+                  << " reason=" << con->get_remote_close_reason()
+                  << "\n";
+    });
+
+
     c.set_message_handler([&](websocketpp::connection_hdl hdl, client::message_ptr msg) {
         std::string p = msg->get_payload();
 
