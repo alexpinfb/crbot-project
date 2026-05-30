@@ -14,6 +14,9 @@ struct take_job {
     char brand[256];
     char cookie[2048];
     char ua[1024];
+    char domain[128];
+    char origin[128];
+    char resolve[256];
 };
 
 static size_t capture(char *ptr, size_t size, size_t nmemb, void *userdata) {
@@ -65,6 +68,9 @@ static void *take_http_worker(void *arg) {
     const char *brand = job->brand;
     const char *cookie = job->cookie;
     const char *ua = job->ua;
+    const char *domain = job->domain;
+    const char *origin = job->origin;
+    const char *resolve_rule = job->resolve;
     CURL *c = curl_easy_init();
     if (!c) {
         printf("TAKE_HTTP_INIT_FAIL id=%s\n", id);
@@ -75,7 +81,8 @@ static void *take_http_worker(void *arg) {
 
     char url[512];
     snprintf(url, sizeof(url),
-             "https://app.send.tg/internal/v1/p2c/payments/take/%s",
+             "https://%s/internal/v1/p2c/payments/take/%s",
+             domain,
              id);
 
     struct curl_slist *h = NULL;
@@ -87,8 +94,12 @@ static void *take_http_worker(void *arg) {
 
     h = curl_slist_append(h, cookie_h);
     h = curl_slist_append(h, ua_h);
-    h = curl_slist_append(h, "Origin: https://app.send.tg");
-    h = curl_slist_append(h, "Referer: https://app.send.tg/");
+        char origin_h[256];
+    char referer_h[256];
+    snprintf(origin_h, sizeof(origin_h), "Origin: %s", origin);
+    snprintf(referer_h, sizeof(referer_h), "Referer: %s/", origin);
+    h = curl_slist_append(h, origin_h);
+    h = curl_slist_append(h, referer_h);
     h = curl_slist_append(h, "Connection: keep-alive");
     h = curl_slist_append(h, "Accept: application/json");
     h = curl_slist_append(h, "Content-Length: 0");
@@ -103,7 +114,7 @@ static void *take_http_worker(void *arg) {
     curl_easy_setopt(c, CURLOPT_WRITEDATA, body);
     curl_easy_setopt(c, CURLOPT_TIMEOUT_MS, 1500L);
     struct curl_slist *resolve = NULL;
-    resolve = curl_slist_append(resolve, "app.send.tg:443:138.249.21.1");
+    resolve = curl_slist_append(resolve, resolve_rule);
     curl_easy_setopt(c, CURLOPT_RESOLVE, resolve);
 
     struct timespec t1, t2;
@@ -117,7 +128,8 @@ static void *take_http_worker(void *arg) {
     long code = 0;
     curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
 
-    printf("TAKE_HTTP_SEND domain=app.send.tg id=%s amount=%s brand=%s code=%ld curl=%d elapsed_ms=%ld body=%s\n",
+    printf("TAKE_HTTP_SEND domain=%s id=%s amount=%s brand=%s code=%ld curl=%d elapsed_ms=%ld body=%s\n",
+           domain,
            id,
            amount,
            brand,
@@ -138,6 +150,42 @@ static void *take_http_worker(void *arg) {
     return NULL;
 }
 
+
+static void spawn_take_job(const char *id,
+                           const char *amount,
+                           const char *brand,
+                           const char *cookie,
+                           const char *ua,
+                           const char *domain,
+                           const char *origin,
+                           const char *resolve_rule) {
+    struct take_job *job = calloc(1, sizeof(*job));
+    if (!job) {
+        printf("TAKE_HTTP_JOB_ALLOC_FAIL domain=%s id=%s\n", domain, id);
+        fflush(stdout);
+        return;
+    }
+
+    snprintf(job->id, sizeof(job->id), "%s", id);
+    snprintf(job->amount, sizeof(job->amount), "%s", amount);
+    snprintf(job->brand, sizeof(job->brand), "%s", brand);
+    snprintf(job->cookie, sizeof(job->cookie), "%s", cookie);
+    snprintf(job->ua, sizeof(job->ua), "%s", ua);
+    snprintf(job->domain, sizeof(job->domain), "%s", domain);
+    snprintf(job->origin, sizeof(job->origin), "%s", origin);
+    snprintf(job->resolve, sizeof(job->resolve), "%s", resolve_rule);
+
+    pthread_t th;
+    if (pthread_create(&th, NULL, take_http_worker, job) != 0) {
+        printf("TAKE_HTTP_THREAD_FAIL domain=%s id=%s\n", domain, id);
+        fflush(stdout);
+        free(job);
+        return;
+    }
+
+    pthread_detach(th);
+}
+
 void take_http_stub(const char *id, const char *amount, const char *brand) {
     const char *cookie = getenv("CRBOT_COOKIE");
     const char *ua = getenv("CRBOT_UA");
@@ -148,26 +196,13 @@ void take_http_stub(const char *id, const char *amount, const char *brand) {
         return;
     }
 
-    struct take_job *job = calloc(1, sizeof(*job));
-    if (!job) {
-        printf("TAKE_HTTP_JOB_ALLOC_FAIL id=%s\n", id);
-        fflush(stdout);
-        return;
-    }
+    spawn_take_job(id, amount, brand, cookie, ua,
+                   "app.send.tg",
+                   "https://app.send.tg",
+                   "app.send.tg:443:138.249.21.1");
 
-    snprintf(job->id, sizeof(job->id), "%s", id);
-    snprintf(job->amount, sizeof(job->amount), "%s", amount);
-    snprintf(job->brand, sizeof(job->brand), "%s", brand);
-    snprintf(job->cookie, sizeof(job->cookie), "%s", cookie);
-    snprintf(job->ua, sizeof(job->ua), "%s", ua);
-
-    pthread_t th;
-    if (pthread_create(&th, NULL, take_http_worker, job) != 0) {
-        printf("TAKE_HTTP_THREAD_FAIL id=%s\n", id);
-        fflush(stdout);
-        free(job);
-        return;
-    }
-
-    pthread_detach(th);
+    spawn_take_job(id, amount, brand, cookie, ua,
+                   "app.cr.bot",
+                   "https://app.cr.bot",
+                   "app.cr.bot:443:138.249.21.1");
 }
