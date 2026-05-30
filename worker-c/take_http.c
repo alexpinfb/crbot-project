@@ -148,8 +148,9 @@ static void *take_http_worker(void *arg) {
     long code = 0;
     curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
 
-    printf("TAKE_HTTP_SEND domain=%s id=%s amount=%s brand=%s code=%ld curl=%d elapsed_ms=%ld body=%s\n",
+    printf("TAKE_HTTP_SEND domain=%s resolve=%s id=%s amount=%s brand=%s code=%ld curl=%d elapsed_ms=%ld body=%s\n",
            domain,
+           resolve_rule,
            id,
            amount,
            brand,
