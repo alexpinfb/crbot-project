@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <curl/curl.h>
+#include <time.h>
 #include <hiredis/hiredis.h>
 #include "take_http.h"
 
@@ -97,17 +98,24 @@ void take_http_stub(const char *id, const char *amount, const char *brand) {
     resolve = curl_slist_append(resolve, "app.send.tg:443:138.249.21.1");
     curl_easy_setopt(c, CURLOPT_RESOLVE, resolve);
 
+    struct timespec t1, t2;
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+
     CURLcode res = curl_easy_perform(c);
+
+    clock_gettime(CLOCK_MONOTONIC, &t2);
+    long elapsed_ms = (long)((t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_nsec - t1.tv_nsec) / 1000000);
 
     long code = 0;
     curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
 
-    printf("TAKE_HTTP_SEND domain=app.send.tg id=%s amount=%s brand=%s code=%ld curl=%d body=%s\n",
+    printf("TAKE_HTTP_SEND domain=app.send.tg id=%s amount=%s brand=%s code=%ld curl=%d elapsed_ms=%ld body=%s\n",
            id,
            amount,
            brand,
            code,
            (int)res,
+           elapsed_ms,
            body);
     fflush(stdout);
 
