@@ -58,21 +58,19 @@ static void save_success(const char *source_id, const char *amount, const char *
     redisFree(rc);
 }
 
-void take_http_stub(const char *id, const char *amount, const char *brand) {
-    const char *cookie = getenv("CRBOT_COOKIE");
-    const char *ua = getenv("CRBOT_UA");
-
-    if (!cookie || !ua) {
-        printf("TAKE_HTTP_SKIP_AUTH id=%s\n", id);
-        fflush(stdout);
-        return;
-    }
-
+static void *take_http_worker(void *arg) {
+    struct take_job *job = (struct take_job *)arg;
+    const char *id = job->id;
+    const char *amount = job->amount;
+    const char *brand = job->brand;
+    const char *cookie = job->cookie;
+    const char *ua = job->ua;
     CURL *c = curl_easy_init();
     if (!c) {
         printf("TAKE_HTTP_INIT_FAIL id=%s\n", id);
         fflush(stdout);
-        return;
+        free(job);
+        return NULL;
     }
 
     char url[512];
@@ -136,4 +134,40 @@ void take_http_stub(const char *id, const char *amount, const char *brand) {
     if (h) curl_slist_free_all(h);
     if (resolve) curl_slist_free_all(resolve);
     curl_easy_cleanup(c);
+    free(job);
+    return NULL;
+}
+
+void take_http_stub(const char *id, const char *amount, const char *brand) {
+    const char *cookie = getenv("CRBOT_COOKIE");
+    const char *ua = getenv("CRBOT_UA");
+
+    if (!cookie || !ua) {
+        printf("TAKE_HTTP_SKIP_AUTH id=%s\n", id);
+        fflush(stdout);
+        return;
+    }
+
+    struct take_job *job = calloc(1, sizeof(*job));
+    if (!job) {
+        printf("TAKE_HTTP_JOB_ALLOC_FAIL id=%s\n", id);
+        fflush(stdout);
+        return;
+    }
+
+    snprintf(job->id, sizeof(job->id), "%s", id);
+    snprintf(job->amount, sizeof(job->amount), "%s", amount);
+    snprintf(job->brand, sizeof(job->brand), "%s", brand);
+    snprintf(job->cookie, sizeof(job->cookie), "%s", cookie);
+    snprintf(job->ua, sizeof(job->ua), "%s", ua);
+
+    pthread_t th;
+    if (pthread_create(&th, NULL, take_http_worker, job) != 0) {
+        printf("TAKE_HTTP_THREAD_FAIL id=%s\n", id);
+        fflush(stdout);
+        free(job);
+        return;
+    }
+
+    pthread_detach(th);
 }
