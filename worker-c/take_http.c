@@ -4,7 +4,17 @@
 #include <curl/curl.h>
 #include <time.h>
 #include <hiredis/hiredis.h>
+#include <pthread.h>
 #include "take_http.h"
+
+
+struct take_job {
+    char id[128];
+    char amount[64];
+    char brand[256];
+    char cookie[2048];
+    char ua[1024];
+};
 
 static size_t capture(char *ptr, size_t size, size_t nmemb, void *userdata) {
     size_t n = size * nmemb;
