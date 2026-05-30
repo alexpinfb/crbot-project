@@ -161,22 +161,8 @@ int main() {
     con->append_header("Origin", "https://app.send.tg");
     con->append_header("User-Agent", ua);
 
-    while (true) {
-        c.connect(con);
-        c.run();
-        std::cout << "CPP_WS_RECONNECT sleep=1\n";
-        sleep(1);
-        websocketpp::lib::error_code ec2;
-        con = c.get_connection("wss://app.send.tg/internal/v1/p2c-socket/?EIO=4&transport=websocket", ec2);
-        if (ec2) {
-            std::cerr << "get_connection error: " << ec2.message() << "\n";
-            sleep(3);
-            continue;
-        }
-        con->append_header("Cookie", cookie);
-        con->append_header("Origin", "https://app.send.tg");
-        con->append_header("User-Agent", ua);
-    }
+    c.connect(con);
+    c.run();
 
     return 0;
 }

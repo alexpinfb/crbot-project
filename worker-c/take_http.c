@@ -7,7 +7,6 @@
 #include <pthread.h>
 #include "take_http.h"
 
-
 struct take_job {
     char id[128];
     char amount[64];
@@ -19,13 +18,38 @@ struct take_job {
     char resolve[256];
 };
 
+struct curl_pool {
+    CURL *curl;
+    pthread_mutex_t mu;
+};
+
+static struct curl_pool g_send_pool = {0, PTHREAD_MUTEX_INITIALIZER};
+static struct curl_pool g_cr_pool = {0, PTHREAD_MUTEX_INITIALIZER};
+
+static struct curl_pool *pool_for_domain(const char *domain) {
+    return strcmp(domain, "app.cr.bot") == 0 ? &g_cr_pool : &g_send_pool;
+}
+
+static CURL *pool_get_locked(const char *domain) {
+    struct curl_pool *pool = pool_for_domain(domain);
+    pthread_mutex_lock(&pool->mu);
+
+    if (!pool->curl) pool->curl = curl_easy_init();
+    else curl_easy_reset(pool->curl);
+
+    return pool->curl;
+}
+
+static void pool_unlock(const char *domain) {
+    pthread_mutex_unlock(&pool_for_domain(domain)->mu);
+}
+
 static size_t capture(char *ptr, size_t size, size_t nmemb, void *userdata) {
     size_t n = size * nmemb;
     char *buf = (char *)userdata;
     size_t cur = strlen(buf);
 
-    if (cur + n > 511)
-        n = 511 - cur;
+    if (cur + n > 511) n = 511 - cur;
 
     if (n > 0) {
         memcpy(buf + cur, ptr, n);
@@ -35,54 +59,55 @@ static size_t capture(char *ptr, size_t size, size_t nmemb, void *userdata) {
     return size * nmemb;
 }
 
-
 static void save_success(const char *source_id, const char *amount, const char *brand, const char *domain, long elapsed_ms, const char *body) {
     const char *addr = getenv("REDIS_ADDR");
     const char *pass = getenv("REDIS_PASSWORD");
     const char *worker = getenv("WORKER_ID");
-
     if (!addr || !pass || !worker) return;
 
     redisContext *rc = redisConnect(addr, 6379);
-    if (!rc || rc->err) return;
+    if (!rc || rc->err) {
+        if (rc) redisFree(rc);
+        return;
+    }
 
     redisReply *auth = redisCommand(rc, "AUTH %s", pass);
     if (auth) freeReplyObject(auth);
 
     const char *data = body;
-    const char *p = strstr(body, "{\"data\":");
-    if (p == body) {
+    char *tmp = NULL;
+
+    if (strncmp(body, "{\"data\":", 8) == 0) {
         data = body + 8;
         size_t len = strlen(data);
-        if (len > 0 && data[len - 1] == '}') {
-            char *tmp = strdup(data);
-            if (tmp) {
-                tmp[len - 1] = 0;
-
-                char json[4096];
-                snprintf(json, sizeof(json),
-                         "{\"source_id\":\"%s\",\"source_worker\":\"%s\",\"workerId\":\"%s\",\"accountName\":\"a7\",\"source_domain\":\"%s\",\"elapsed_ms\":%ld,\"brand\":\"%s\",\"amount\":\"%s\",\"data\":%s}",
-                         source_id, worker, worker, domain, elapsed_ms, brand, amount, tmp);
-
-                redisReply *r1 = redisCommand(rc, "SETEX crbot:cppTake:%s 600 %s", source_id, json);
-                if (r1) freeReplyObject(r1);
-
-                redisReply *r2 = redisCommand(rc, "SETEX crbot:activeOrder 600 %s", json);
-                if (r2) freeReplyObject(r2);
-
-                free(tmp);
-            }
+        tmp = strdup(data);
+        if (tmp && len > 0 && tmp[len - 1] == '}') {
+            tmp[len - 1] = 0;
+            data = tmp;
         }
     }
+
+    char json[4096];
+    snprintf(json, sizeof(json),
+        "{\"source_id\":\"%s\",\"source_worker\":\"%s\",\"workerId\":\"%s\",\"accountName\":\"a7\",\"source_domain\":\"%s\",\"elapsed_ms\":%ld,\"brand\":\"%s\",\"amount\":\"%s\",\"data\":%s}",
+        source_id, worker, worker, domain, elapsed_ms, brand, amount, data);
+
+    redisReply *r1 = redisCommand(rc, "SETEX crbot:cppTake:%s 600 %s", source_id, json);
+    if (r1) freeReplyObject(r1);
+
+    redisReply *r2 = redisCommand(rc, "SETEX crbot:activeOrder 600 %s", json);
+    if (r2) freeReplyObject(r2);
 
     printf("TAKE_SUCCESS_SAVE id=%s amount=%s brand=%s worker=%s domain=%s elapsed_ms=%ld\n", source_id, amount, brand, worker, domain, elapsed_ms);
     fflush(stdout);
 
+    if (tmp) free(tmp);
     redisFree(rc);
 }
 
 static void *take_http_worker(void *arg) {
     struct take_job *job = (struct take_job *)arg;
+
     const char *id = job->id;
     const char *amount = job->amount;
     const char *brand = job->brand;
@@ -91,51 +116,53 @@ static void *take_http_worker(void *arg) {
     const char *domain = job->domain;
     const char *origin = job->origin;
     const char *resolve_rule = job->resolve;
-    CURL *c = curl_easy_init();
+
+    CURL *c = pool_get_locked(domain);
     if (!c) {
-        printf("TAKE_HTTP_INIT_FAIL id=%s\n", id);
+        printf("TAKE_HTTP_INIT_FAIL domain=%s id=%s\n", domain, id);
         fflush(stdout);
+        pool_unlock(domain);
         free(job);
         return NULL;
     }
 
     char url[512];
-    snprintf(url, sizeof(url),
-             "https://%s/internal/v1/p2c/payments/take/%s",
-             domain,
-             id);
+    snprintf(url, sizeof(url), "https://%s/internal/v1/p2c/payments/take/%s", domain, id);
 
     struct curl_slist *h = NULL;
-    char cookie_h[2048];
-    char ua_h[1024];
+    struct curl_slist *resolve = NULL;
+    char cookie_h[2300];
+    char ua_h[1200];
+    char origin_h[256];
+    char referer_h[256];
+    char body[512] = {0};
 
     snprintf(cookie_h, sizeof(cookie_h), "Cookie: %s", cookie);
     snprintf(ua_h, sizeof(ua_h), "User-Agent: %s", ua);
+    snprintf(origin_h, sizeof(origin_h), "Origin: %s", origin);
+    snprintf(referer_h, sizeof(referer_h), "Referer: %s/", origin);
 
     h = curl_slist_append(h, cookie_h);
     h = curl_slist_append(h, ua_h);
-        char origin_h[256];
-    char referer_h[256];
-    snprintf(origin_h, sizeof(origin_h), "Origin: %s", origin);
-    snprintf(referer_h, sizeof(referer_h), "Referer: %s/", origin);
     h = curl_slist_append(h, origin_h);
     h = curl_slist_append(h, referer_h);
     h = curl_slist_append(h, "Connection: keep-alive");
     h = curl_slist_append(h, "Accept: application/json");
     h = curl_slist_append(h, "Content-Length: 0");
 
+    resolve = curl_slist_append(resolve, resolve_rule);
+
     curl_easy_setopt(c, CURLOPT_URL, url);
     curl_easy_setopt(c, CURLOPT_POST, 1L);
     curl_easy_setopt(c, CURLOPT_POSTFIELDS, "");
     curl_easy_setopt(c, CURLOPT_POSTFIELDSIZE, 0L);
     curl_easy_setopt(c, CURLOPT_HTTPHEADER, h);
-    char body[512] = {0};
     curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, capture);
     curl_easy_setopt(c, CURLOPT_WRITEDATA, body);
     curl_easy_setopt(c, CURLOPT_TIMEOUT_MS, 1500L);
-    struct curl_slist *resolve = NULL;
-    resolve = curl_slist_append(resolve, resolve_rule);
     curl_easy_setopt(c, CURLOPT_RESOLVE, resolve);
+    curl_easy_setopt(c, CURLOPT_TCP_KEEPALIVE, 1L);
+    curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
 
     struct timespec t1, t2;
     clock_gettime(CLOCK_MONOTONIC, &t1);
@@ -149,15 +176,7 @@ static void *take_http_worker(void *arg) {
     curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
 
     printf("TAKE_HTTP_SEND domain=%s resolve=%s id=%s amount=%s brand=%s code=%ld curl=%d elapsed_ms=%ld body=%s\n",
-           domain,
-           resolve_rule,
-           id,
-           amount,
-           brand,
-           code,
-           (int)res,
-           elapsed_ms,
-           body);
+           domain, resolve_rule, id, amount, brand, code, (int)res, elapsed_ms, body);
     fflush(stdout);
 
     if (code == 200 && body[0]) {
@@ -166,20 +185,13 @@ static void *take_http_worker(void *arg) {
 
     if (h) curl_slist_free_all(h);
     if (resolve) curl_slist_free_all(resolve);
-    curl_easy_cleanup(c);
+
+    pool_unlock(domain);
     free(job);
     return NULL;
 }
 
-
-static void spawn_take_job(const char *id,
-                           const char *amount,
-                           const char *brand,
-                           const char *cookie,
-                           const char *ua,
-                           const char *domain,
-                           const char *origin,
-                           const char *resolve_rule) {
+static void spawn_take_job(const char *id, const char *amount, const char *brand, const char *cookie, const char *ua, const char *domain, const char *origin, const char *resolve_rule) {
     struct take_job *job = calloc(1, sizeof(*job));
     if (!job) {
         printf("TAKE_HTTP_JOB_ALLOC_FAIL domain=%s id=%s\n", domain, id);
@@ -217,13 +229,6 @@ void take_http_stub(const char *id, const char *amount, const char *brand) {
         return;
     }
 
-    spawn_take_job(id, amount, brand, cookie, ua,
-                   "app.send.tg",
-                   "https://app.send.tg",
-                   "app.send.tg:443:138.249.21.1");
-
-    spawn_take_job(id, amount, brand, cookie, ua,
-                   "app.cr.bot",
-                   "https://app.cr.bot",
-                   "app.cr.bot:443:138.249.21.1");
+    spawn_take_job(id, amount, brand, cookie, ua, "app.send.tg", "https://app.send.tg", "app.send.tg:443:138.249.21.1");
+    spawn_take_job(id, amount, brand, cookie, ua, "app.cr.bot", "https://app.cr.bot", "app.cr.bot:443:138.249.21.1");
 }
