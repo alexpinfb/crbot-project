@@ -36,7 +36,7 @@ static size_t capture(char *ptr, size_t size, size_t nmemb, void *userdata) {
 }
 
 
-static void save_success(const char *source_id, const char *amount, const char *brand, const char *body) {
+static void save_success(const char *source_id, const char *amount, const char *brand, const char *domain, long elapsed_ms, const char *body) {
     const char *addr = getenv("REDIS_ADDR");
     const char *pass = getenv("REDIS_PASSWORD");
     const char *worker = getenv("WORKER_ID");
@@ -49,13 +49,33 @@ static void save_success(const char *source_id, const char *amount, const char *
     redisReply *auth = redisCommand(rc, "AUTH %s", pass);
     if (auth) freeReplyObject(auth);
 
-    redisReply *r1 = redisCommand(rc, "SETEX crbot:cppTake:%s 600 %s", source_id, body);
-    if (r1) freeReplyObject(r1);
+    const char *data = body;
+    const char *p = strstr(body, "{\"data\":");
+    if (p == body) {
+        data = body + 8;
+        size_t len = strlen(data);
+        if (len > 0 && data[len - 1] == '}') {
+            char *tmp = strdup(data);
+            if (tmp) {
+                tmp[len - 1] = 0;
 
-    redisReply *r2 = redisCommand(rc, "SETEX crbot:activeOrder 600 %s", body);
-    if (r2) freeReplyObject(r2);
+                char json[4096];
+                snprintf(json, sizeof(json),
+                         "{\"source_id\":\"%s\",\"source_worker\":\"%s\",\"workerId\":\"%s\",\"accountName\":\"a7\",\"source_domain\":\"%s\",\"elapsed_ms\":%ld,\"brand\":\"%s\",\"amount\":\"%s\",\"data\":%s}",
+                         source_id, worker, worker, domain, elapsed_ms, brand, amount, tmp);
 
-    printf("TAKE_SUCCESS_SAVE id=%s amount=%s brand=%s worker=%s\n", source_id, amount, brand, worker);
+                redisReply *r1 = redisCommand(rc, "SETEX crbot:cppTake:%s 600 %s", source_id, json);
+                if (r1) freeReplyObject(r1);
+
+                redisReply *r2 = redisCommand(rc, "SETEX crbot:activeOrder 600 %s", json);
+                if (r2) freeReplyObject(r2);
+
+                free(tmp);
+            }
+        }
+    }
+
+    printf("TAKE_SUCCESS_SAVE id=%s amount=%s brand=%s worker=%s domain=%s elapsed_ms=%ld\n", source_id, amount, brand, worker, domain, elapsed_ms);
     fflush(stdout);
 
     redisFree(rc);
@@ -140,7 +160,7 @@ static void *take_http_worker(void *arg) {
     fflush(stdout);
 
     if (code == 200 && body[0]) {
-        save_success(id, amount, brand, body);
+        save_success(id, amount, brand, domain, elapsed_ms, body);
     }
 
     if (h) curl_slist_free_all(h);

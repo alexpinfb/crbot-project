@@ -434,9 +434,10 @@ async function sendOrderToTelegram(data, elapsed) {
   const via = data.via || data.source_ws || "WS1";
   const winnerDomain = data.winner_domain || data.source_domain || "unknown";
 
-  const orderUrl = typeof data.url === "string" && data.url.startsWith("http") ? data.url : "";
-  const orderAmount = data.in_amount || data.amount_fiat || data.source_amount || data.amount || "unknown";
-  const orderBrand = data.brand_name || data.brand || "unknown";
+  const payload = data.data || data;
+  const orderUrl = typeof payload.url === "string" && payload.url.startsWith("http") ? payload.url : "";
+  const orderAmount = payload.in_amount || payload.amount_fiat || data.source_amount || data.amount || payload.amount || "unknown";
+  const orderBrand = payload.brand_name || data.brand || payload.brand || "unknown";
 
   const text =
 `✅ Ордер взят
@@ -446,7 +447,7 @@ async function sendOrderToTelegram(data, elapsed) {
 ⚡ ${elapsedMs} ms (${via})
 🌐 ${winnerDomain}
 
-ID: ${data.id}
+ID: ${payload.id || data.id}
 Сумма: ${orderAmount} RUB
 Магазин: ${orderBrand}
 QR:
@@ -455,7 +456,7 @@ ${orderUrl || "нет url"}`;
   const buttons = [];
   if (orderUrl) buttons.push([{ text: "🔗 Открыть QR", url: orderUrl }]);
   buttons.push([{ text: "📋 Активные заявки", url: "https://app.send.tg/p2c/payments?tab=active" }]);
-  buttons.push([{ text: "✅ Подтвердить", callback_data: `complete:${data.id}` }]);
+  buttons.push([{ text: "✅ Подтвердить", callback_data: `complete:${payload.id || data.id}` }]);
   buttons.push([{ text: "🔓 Unlock", callback_data: "unlock" }]);
 
   const reply_markup = { inline_keyboard: buttons };
