@@ -93,7 +93,7 @@ void take_http_stub(const char *id, const char *amount, const char *brand) {
     char body[512] = {0};
     curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, capture);
     curl_easy_setopt(c, CURLOPT_WRITEDATA, body);
-    curl_easy_setopt(c, CURLOPT_TIMEOUT_MS, 3000L);
+    curl_easy_setopt(c, CURLOPT_TIMEOUT_MS, 1500L);
     struct curl_slist *resolve = NULL;
     resolve = curl_slist_append(resolve, "app.send.tg:443:138.249.21.1");
     curl_easy_setopt(c, CURLOPT_RESOLVE, resolve);
