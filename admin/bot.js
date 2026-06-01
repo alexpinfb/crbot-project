@@ -427,29 +427,19 @@ async function takeFast(id, amount, label) {
 }
 
 // ── SEND ORDER TO TG ─────────────────────────────────────────────────
+
 async function sendOrderToTelegram(data, elapsed) {
-  const worker =
-  data.workerId ||
-  data.worker_id ||
-  data.source_worker ||
-  "unknown";
+  const worker = data.workerId || data.worker_id || data.source_worker || "unknown";
+  const elapsedMs = data.elapsed_ms || elapsed || 0;
+  const via = data.via || data.source_ws || "WS1";
+  const winnerDomain = data.winner_domain || data.source_domain || "unknown";
 
-const elapsedMs =
-  data.elapsed_ms ||
-  elapsed ||
-  0;
+  const payload = data.data || data;
+  const orderUrl = typeof payload.url === "string" && payload.url.startsWith("http") ? payload.url : "";
+  const orderAmount = payload.in_amount || payload.amount_fiat || data.source_amount || data.amount || payload.amount || "unknown";
+  const orderBrand = payload.brand_name || data.brand || payload.brand || "unknown";
 
-const via =
-  data.via ||
-  data.source_ws ||
-  "WS1";
-
-const winnerDomain =
-  data.winner_domain ||
-  data.source_domain ||
-  "unknown";
-
-const text =
+  const text =
 `✅ Ордер взят
 
 👷 Аккаунт: ${data.accountName || "unknown"}
@@ -457,26 +447,22 @@ const text =
 ⚡ ${elapsedMs} ms (${via})
 🌐 ${winnerDomain}
 
-ID: ${data.id}
-Сумма: ${data.in_amount} RUB
-Магазин: ${data.brand_name}
+ID: ${payload.id || data.id}
+Сумма: ${orderAmount} RUB
+Магазин: ${orderBrand}
 QR:
-${data.url}`;
+${orderUrl || "нет url"}`;
 
-  const reply_markup = {
-    inline_keyboard: [
-      ...(orderUrl ? [[{ text: "🔗 Открыть QR", url: orderUrl }]] : []),
-      [{ text: "📋 Активные заявки", url: "https://app.send.tg/p2c/payments?tab=active" }],
-      [{ text: "✅ Подтвердить", callback_data: `complete:${data.id}` }],
-      [{ text: "🔓 Unlock", callback_data: "unlock" }]
-    ]
-  };
+  const buttons = [];
+  if (orderUrl) buttons.push([{ text: "🔗 Открыть QR", url: orderUrl }]);
+  buttons.push([{ text: "📋 Активные заявки", url: "https://app.send.tg/p2c/payments?tab=active" }]);
+  buttons.push([{ text: "✅ Подтвердить", callback_data: `complete:${payload.id || data.id}` }]);
+  buttons.push([{ text: "🔓 Unlock", callback_data: "unlock" }]);
+
+  const reply_markup = { inline_keyboard: buttons };
 
   try {
-    if (!orderUrl) {
-      log(`QR_MISSING_RAW ${JSON.stringify(data).slice(0, 1200)}`);
-      throw new Error("missing order url");
-    }
+    if (!orderUrl) throw new Error("missing order url");
 
     const qrBuffer = await QRCode.toBuffer(orderUrl, {
       type: "png",
@@ -493,6 +479,7 @@ ${data.url}`;
     tg.sendMessage(CHAT_ID, text, { reply_markup });
   }
 }
+
 
 // ── DUAL WEBSOCKET ────────────────────────────────────────────────────
 function createWS(label) {
@@ -942,19 +929,34 @@ async function getWorkersToggleText() {
 let lastGoActiveOrderKey = null;
 
 async function goActiveOrderWatcher() {
+  if (!redisReady) return;
+
   try {
     const raw = await redis.get("crbot:activeOrder");
     if (!raw) return;
 
     const order = JSON.parse(raw);
-    const key = `${order.id || ""}:${order.payload || order.url || ""}`;
+    const payload = order.data || order;
 
-    if (!key || key === lastGoActiveOrderKey) return;
+    const oid = payload.id || order.id || order.source_id || "";
+    const ourl = payload.url || order.url || payload.payload || order.payload || "";
+    const hasQrUrl = typeof ourl === "string" && ourl.startsWith("http");
+    const key = `${oid}:${ourl}`;
+
+    if (!oid || key === lastGoActiveOrderKey) return;
+
+    if (!hasQrUrl) {
+      lastGoActiveOrderKey = key;
+      log(`GO_ACTIVE_ORDER_SKIP_NO_QR id=${oid} raw=${JSON.stringify(order).slice(0, 800)}`);
+      return;
+    }
 
     lastGoActiveOrderKey = key;
     activeOrder = order;
 
-    log(`GO_ACTIVE_ORDER_NOTIFY id=${order.id} amount=${order.in_amount || order.amount}`);
+    log(`GO_ACTIVE_ORDER_NOTIFY id=${oid} amount=${payload.in_amount || order.amount}`);
+    log(`GO_ACTIVE_ORDER_FIELDS id=${oid} in_amount=${payload.in_amount} amount=${order.amount} amount_fiat=${payload.amount_fiat} out_amount=${payload.out_amount} source_amount=${order.source_amount} status=${payload.status}`);
+
     sendOrderToTelegram(order, "worker");
   } catch (e) {
     log(`GO_ACTIVE_ORDER_WATCH_ERR ${e.message}`);
