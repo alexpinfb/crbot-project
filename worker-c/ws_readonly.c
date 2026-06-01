@@ -37,26 +37,40 @@ void parse_event(const char *msg) {
     if (!strstr(msg, "list:update"))
         return;
 
+    if (!strstr(msg, "\"data\""))
+        return;
+
+    if (!strstr(msg, "\"data\""))
+        return;
+
     char id[128] = {0};
     char amount[128] = {0};
     char brand[512] = {0};
+    char provider[64] = {0};
+    char url[512] = {0};
 
     extract_str(msg, "id", id, sizeof(id));
     extract_str(msg, "in_amount", amount, sizeof(amount));
     extract_str(msg, "brand_name", brand, sizeof(brand));
+    extract_str(msg, "provider", provider, sizeof(provider));
+    extract_str(msg, "url", url, sizeof(url));
 
-    if (id[0]) {
-        printf(
-            "C_WS_EVENT id=%s amount=%s brand=%s\n",
-            id,
-            amount,
-            brand
-        );
+    if (!id[0] || !amount[0] || !provider[0] || !url[0])
+        return;
 
+    if (!id[0])
+        return;
+
+    if (strcmp(provider, "nspk") != 0 || strncmp(url, "https://qr.nspk.ru/", 19) != 0) {
+        return;
+    }
+
+    if (take_dry(id, amount, brand)) {
+        printf("C_WS_EVENT id=%s amount=%s brand=%s provider=%s url=%s\n",
+               id, amount, brand, provider, url);
         fflush(stdout);
-
-        if (take_dry(id, amount, brand)) {
-            take_http_stub(id, amount, brand);
-        }
+        take_http_stub(id, amount, brand, url);
     }
 }
+
+
