@@ -364,6 +364,9 @@ async function takeOneDomain(domain, id, label, started) {
 }
 
 async function takeFast(id, amount, label) {
+  log(`NODE_TAKE_DISABLED id=${id} amount=${amount} via=${label}`);
+  return;
+
   if (shuttingDown || !catching) return;
 
   const lockStarted = Date.now();
@@ -466,7 +469,7 @@ ${data.url}`;
 
   const reply_markup = {
     inline_keyboard: [
-      [{ text: "🔗 Открыть QR", url: data.url }],
+      ...(orderUrl ? [[{ text: "🔗 Открыть QR", url: orderUrl }]] : []),
       [{ text: "📋 Активные заявки", url: "https://app.send.tg/p2c/payments?tab=active" }],
       [{ text: "✅ Подтвердить", callback_data: `complete:${data.id}` }],
       [{ text: "🔓 Unlock", callback_data: "unlock" }]
@@ -474,7 +477,12 @@ ${data.url}`;
   };
 
   try {
-    const qrBuffer = await QRCode.toBuffer(data.url, {
+    if (!orderUrl) {
+      log(`QR_MISSING_RAW ${JSON.stringify(data).slice(0, 1200)}`);
+      throw new Error("missing order url");
+    }
+
+    const qrBuffer = await QRCode.toBuffer(orderUrl, {
       type: "png",
       width: 900,
       margin: 2
