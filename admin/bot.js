@@ -243,13 +243,9 @@ const BASE_HEADERS = {
 };
 
 // ── STATE FLAGS ───────────────────────────────────────────────────────
-let catching    = true;
-setTimeout(async () => {
-  catching = true;
-  await setSharedCatching(true);
-  await syncSettingsToRedis();
-  log("FORCE_CATCHING_ON");
-}, 3000);
+let catching    = false;
+// Do not force catching ON on admin restart.
+// Telegram Stop / Redis crbot:catching must remain authoritative.
 
 let shuttingDown = false;
 let taking      = false;
