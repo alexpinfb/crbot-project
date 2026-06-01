@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <string>
 #include <unistd.h>
+#include <openssl/ssl.h>
 
 extern "C" void parse_event(const char *msg);
 extern "C" {
@@ -87,24 +88,32 @@ int main() {
     c.clear_error_channels(websocketpp::log::elevel::all);
     c.init_asio();
 
+
+    c.set_socket_init_handler([](websocketpp::connection_hdl, boost::asio::ssl::stream<boost::asio::ip::tcp::socket>& s) {
+        SSL_set_tlsext_host_name(s.native_handle(), "app.send.tg");
+    });
+
     c.set_tls_init_handler([](websocketpp::connection_hdl) {
         auto ctx = websocketpp::lib::make_shared<boost::asio::ssl::context>(
-            boost::asio::ssl::context::tlsv12_client
+            boost::asio::ssl::context::tls_client
         );
         ctx->set_verify_mode(boost::asio::ssl::verify_none);
         return ctx;
     });
 
     c.set_open_handler([&](websocketpp::connection_hdl) {
-        std::cout << "CPP_WS_READY\n";
+        std::cout << "CPP_WS_OPEN\n";
         redis_heartbeat();
-            keepalive_warmup_once();
+            // disabled: warmup caused extra HTTP noise/rate-limit
+            // keepalive_warmup_once();
     });
 
     c.set_fail_handler([&](websocketpp::connection_hdl hdl) {
         client::connection_ptr con = c.get_con_from_hdl(hdl);
         std::cout << "CPP_WS_FAIL ec=" << con->get_ec().message()
                   << " state=" << con->get_state()
+                  << " status=" << con->get_response_code()
+                  << " reason=" << con->get_response_msg()
                   << "\n";
     });
 
@@ -125,7 +134,8 @@ int main() {
             c.send(hdl, "3", websocketpp::frame::opcode::text);
             std::cout << "CPP_WS_SEND 3\n";
             redis_heartbeat();
-            keepalive_warmup_once();
+            // disabled: warmup caused extra HTTP noise/rate-limit
+            // keepalive_warmup_once();
             return;
         }
 
@@ -158,8 +168,8 @@ int main() {
     }
 
     con->append_header("Cookie", cookie);
-    con->append_header("Origin", "https://app.send.tg");
-    con->append_header("User-Agent", ua);
+    con->replace_header("Origin", "https://app.send.tg");
+    con->replace_header("User-Agent", "Mozilla/5.0");
 
     c.connect(con);
     c.run();
